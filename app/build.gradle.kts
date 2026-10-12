@@ -19,12 +19,19 @@ android {
   val appVersionName = (project.findProperty("appVersionName") as? String)
     ?: versionProps.getProperty("versionName", "1.0.0")
 
+  val defaultToken = (project.findProperty("DEFAULT_GITHUB_TOKEN") as? String)
+    ?: System.getenv("DEFAULT_GITHUB_TOKEN")
+    ?: "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"
+
   defaultConfig {
     applicationId = "fr.installapk.app"
     minSdk = 24
     targetSdk = 36
     versionCode = appVersionCode
     versionName = appVersionName
+
+    buildConfigField("String", "DEFAULT_GITHUB_TOKEN", "\"$defaultToken\"")
+    buildConfigField("String", "ALERT_EMAIL", "\"token.github@alsteens.net\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
