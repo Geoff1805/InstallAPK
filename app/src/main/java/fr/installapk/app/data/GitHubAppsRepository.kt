@@ -89,6 +89,62 @@ class GitHubAppsRepository(private val context: Context) {
         }
     }
 
+    suspend fun validateToken(token: String): TokenValidationResult = withContext(Dispatchers.IO) {
+        if (token.isBlank()) {
+            return@withContext TokenValidationResult(
+                isValid = false,
+                errorMessage = "Aucun jeton configuré"
+            )
+        }
+
+        try {
+            val authVal = if (token.startsWith("Bearer ") || token.startsWith("token ")) token else "Bearer $token"
+            val request = Request.Builder()
+                .url("https://api.github.com/user")
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "InstallAPK-Token-Validator")
+                .header("Authorization", authVal)
+                .build()
+
+            val response = client.newCall(request).execute()
+            val code = response.code
+            val expirationHeader = response.header("github-authentication-token-expiration")
+            val scopesHeader = response.header("x-oauth-scopes")
+
+            if (response.isSuccessful) {
+                val bodyStr = response.body?.string() ?: ""
+                val username = try {
+                    JSONObject(bodyStr).optString("login", "")
+                } catch (e: Exception) {
+                    null
+                }
+                TokenValidationResult(
+                    isValid = true,
+                    statusCode = code,
+                    username = username,
+                    expirationDate = expirationHeader,
+                    scopes = scopesHeader
+                )
+            } else {
+                TokenValidationResult(
+                    isValid = false,
+                    statusCode = code,
+                    errorMessage = when (code) {
+                        401 -> "Jeton GitHub invalide ou révoqué (Bad credentials)"
+                        403 -> "Accès refusé ou quota API atteint"
+                        404 -> "Utilisateur GitHub introuvable"
+                        else -> "Erreur HTTP $code"
+                    }
+                )
+            }
+        } catch (e: Exception) {
+            TokenValidationResult(
+                isValid = false,
+                errorMessage = "Erreur de connexion : ${e.message}"
+            )
+        }
+    }
+
     suspend fun fetchLatestAppInfo(app: ProjectApp, token: String): ProjectApp = withContext(Dispatchers.IO) {
         try {
             val url = "https://api.github.com/repos/${app.repoOwner}/${app.repoName}/actions/artifacts?per_page=15"
@@ -105,7 +161,7 @@ class GitHubAppsRepository(private val context: Context) {
             val response = client.newCall(reqBuilder.build()).execute()
             if (!response.isSuccessful) {
                 return@withContext app.copy(
-                    statusText = "Erreur API (${response.code})"
+                    statusText = if (response.code == 401) "Clé invalide (401)" else "Erreur API (${response.code})"
                 )
             }
 
