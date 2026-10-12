@@ -12,7 +12,11 @@ object ApkInstaller {
 
     fun canRequestPackageInstalls(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.packageManager.canRequestPackageInstalls()
+            try {
+                context.packageManager.canRequestPackageInstalls()
+            } catch (e: Exception) {
+                true
+            }
         } else {
             true
         }
@@ -20,12 +24,22 @@ object ApkInstaller {
 
     fun openInstallPermissionSettings(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                Uri.parse("package:${context.packageName}")
-            )
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(intent)
+            try {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:${context.packageName}")
+                )
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                try {
+                    val fallbackIntent = Intent(Settings.ACTION_SECURITY_SETTINGS)
+                    fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(fallbackIntent)
+                } catch (e2: Exception) {
+                    e2.printStackTrace()
+                }
+            }
         }
     }
 
