@@ -1,0 +1,101 @@
+name: Check GitHub PAT Validity & Alert
+
+on:
+  schedule:
+    # Vérification quotidienne automatique chaque jour à 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-token-validity:
+    name: Verify Token & Send Alerts
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Validate GitHub PAT Expiration and Status
+        id: check_token
+        env:
+          TARGET_TOKEN: ${{ vars.CHECK_PAT_TOKEN }}
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+        run: |
+          if [ -z "$TARGET_TOKEN" ]; then
+            echo "::error::Variable CHECK_PAT_TOKEN manquante."
+            echo "status=missing" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          echo "Validation du jeton auprès de l'API GitHub..."
+          HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $TARGET_TOKEN" -H "User-Agent: PAT-Health-Check" https://api.github.com/user)
+          
+          HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
+          HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n1)
+
+          echo "Code réponse HTTP : $HTTP_CODE"
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            LOGIN=$(echo "$HTTP_BODY" | jq -r '.login')
+            echo "Token valide pour le compte : $LOGIN"
+            
+            # Vérification de la date d'expiration via les en-têtes
+            EXPIRATION_HEADER=$(curl -s -I -H "Authorization: Bearer $TARGET_TOKEN" https://api.github.com/user | grep -i "github-authentication-token-expiration" | awk '{print $2, $3, $4}')
+            echo "Expiration déclarée : $EXPIRATION_HEADER"
+            echo "status=valid" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::Le jeton GitHub n'est plus valide ! Code HTTP : $HTTP_CODE"
+            echo "status=invalid" >> $GITHUB_OUTPUT
+            echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notify via Email on Failure
+        if: steps.check_token.outputs.status == 'invalid'
+        uses: dawidd6/action-send-mail@v4
+        continue-on-error: true
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "[ALERTE] Clé GitHub PAT expirée ou invalide sur InstallAPK"
+          to: ${{ vars.ALERT_EMAIL }}
+          from: "InstallAPK Token Watcher <${{ secrets.MAIL_USERNAME }}>"
+          body: |
+            Bonjour,
+
+            Votre clé GitHub PAT (Personal Access Token) configurée pour l'application InstallAPK et vos dépôts GitHub n'est plus valide ou a expiré (Code HTTP: ${{ steps.check_token.outputs.http_code }}).
+
+            Veuillez générer un nouveau token avec le scope 'repo' et le mettre à jour dans l'application InstallAPK et sur GitHub.
+
+            Ceci est une notification automatique.
+
+      - name: Create or Update GitHub Issue Alert
+        if: steps.check_token.outputs.status == 'invalid'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const email = process.env.ALERT_EMAIL || 'contact@installapk.app';
+            const issueTitle = '🚨 [ALERTE] Clé GitHub PAT Expirée ou Invalide';
+            const issueBody = `### ⚠️ Alerte Validité du Jeton GitHub\n\nLa clé GitHub configurée pour **InstallAPK** a été détectée comme **invalide ou révoquée** par la vérification automatique quotidienne.\n\n- **Email de contact notifié :** ${email}\n- **Action requise :** Générer un nouveau Personal Access Token (scope \`repo\`) et le renseigner dans l'application Android et les variables du dépôt.\n\n_Vérification automatique InstallAPK CI._`;
+            
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open'
+            });
+            
+            const existing = issues.data.find(i => i.title === issueTitle);
+            if (!existing) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: issueTitle,
+                body: issueBody,
+                labels: ['bug', 'security']
+              });
+            }
+        env:
+          ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
