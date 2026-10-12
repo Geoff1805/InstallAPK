@@ -41,7 +41,7 @@ fun MainScreen(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Image(
-                            painter = painterResource(id = R.mipmap.ic_launcher),
+                            painter = painterResource(id = R.drawable.app_logo),
                             contentDescription = "InstallAPK Logo",
                             modifier = Modifier
                                 .size(36.dp)
@@ -473,7 +473,7 @@ fun AppCard(
             if (app.isUpdating && app.downloadProgress != null) {
                 Spacer(modifier = Modifier.height(8.dp))
                 LinearProgressIndicator(
-                    progress = { app.downloadProgress },
+                    progress = { app.downloadProgress ?: 0f },
                     modifier = Modifier.fillMaxWidth().height(6.dp),
                 )
             }
