@@ -4,7 +4,9 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import fr.installapk.app.BuildConfig
 import fr.installapk.app.data.GitHubAppsRepository
+import fr.installapk.app.data.TokenValidationResult
 import fr.installapk.app.model.ProjectApp
 import fr.installapk.app.util.ApkInstaller
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +18,9 @@ import java.io.File
 
 data class MainUiState(
     val token: String = "",
+    val tokenValidation: TokenValidationResult? = null,
+    val isTokenValidating: Boolean = false,
+    val alertEmail: String = BuildConfig.ALERT_EMAIL,
     val apps: List<ProjectApp> = emptyList(),
     val isLoading: Boolean = false,
     val isUpdatingAll: Boolean = false,
@@ -31,7 +36,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(
         MainUiState(
-            token = prefs.getString("github_token", "") ?: "",
+            token = prefs.getString("github_token", BuildConfig.DEFAULT_GITHUB_TOKEN) ?: BuildConfig.DEFAULT_GITHUB_TOKEN,
             apps = repository.getInitialProjects(),
             needsInstallPermission = !ApkInstaller.canRequestPackageInstalls(application)
         )
@@ -39,12 +44,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     init {
+        validateCurrentToken()
         refreshApps()
     }
 
     fun onTokenChanged(newToken: String) {
-        _uiState.update { it.copy(token = newToken) }
-        prefs.edit().putString("github_token", newToken).apply()
+        val trimmed = newToken.trim()
+        _uiState.update { it.copy(token = trimmed) }
+        prefs.edit().putString("github_token", trimmed).apply()
+        validateCurrentToken()
+    }
+
+    fun validateCurrentToken() {
+        val currentToken = _uiState.value.token
+        viewModelScope.launch {
+            _uiState.update { it.copy(isTokenValidating = true) }
+            val result = repository.validateToken(currentToken)
+            _uiState.update {
+                it.copy(
+                    tokenValidation = result,
+                    isTokenValidating = false
+                )
+            }
+        }
     }
 
     fun checkPermissions() {
@@ -57,6 +79,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             val currentList = _uiState.value.apps.ifEmpty { repository.getInitialProjects() }
+
+            validateCurrentToken()
 
             val updatedList = currentList.map { app ->
                 repository.fetchLatestAppInfo(app, currentToken)
@@ -132,7 +156,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             _uiState.update { it.copy(isUpdatingAll = true) }
-            // Mettre à jour les applications tierces d'abord, et l'appli InstallAPK elle-même en dernier
             val sorted = appsToUpdate.sortedBy { if (it.isSelf) 1 else 0 }
             for (app in sorted) {
                 installOrUpdateApp(app)
