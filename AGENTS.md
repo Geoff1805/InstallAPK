@@ -20,6 +20,18 @@
   3. **Vérification automatique continue** : Workflow GitHub Actions quotidien (`.github/workflows/check-token.yml`) testant la clé via l'API GitHub (`https://api.github.com/user`) et en-têtes `github-authentication-token-expiration`.
   4. **Diagnostic proactif lors des sessions d'agent** : Toujours vérifier la validité de la clé en amont des opérations critiques et alerter l'utilisateur immédiatement en cas de révocation ou d'expiration imminente.
 
+## Sécurité GitHub, Dependency Scanning & Dependabot (/learn)
+- **Règle absolue (/learn)** : Toujours utiliser, activer et configurer les fonctionnalités de sécurité et d'analyse des dépendances sur **TOUS** les dépôts GitHub :
+  1. **Dependency Scanning** :
+     - **Dependency graph** : Toujours activé (`On`).
+     - **Automatic dependency submission** : Toujours activé (`Enabled`) pour remonter l'arbre des dépendances au build.
+  2. **Dependabot** :
+     - **Dependabot alerts** : Toujours activé (`On`) pour être notifié de toute vulnérabilité détectée.
+     - **Dependabot security updates** : Toujours activé (`On`) pour générer automatiquement les correctifs de sécurité.
+     - **Configuration Dependabot (`.github/dependabot.yml`)** : Systématiquement présent à la racine du dépôt pour automatiser la surveillance et la mise à jour des écosystèmes du projet (ex. `gradle`, `github-actions`, etc.).
+  3. **Vérification & activation automatique** : Lors de la création, maintenance ou inspection d'un dépôt GitHub, l'agent doit vérifier l'état de ces fonctionnalités (notamment via l'API GitHub `PUT /repos/{owner}/{repo}/vulnerability-alerts` et `PUT /repos/{owner}/{repo}/automated-security-fixes`) et s'assurer que `.github/dependabot.yml` est en place.
+
+
 ## Architecture & Fonctionnalités Clés
 - **Nom de l'application** : InstallAPK / AppUpdater
 - **Package ID** : `fr.installapk.app`
