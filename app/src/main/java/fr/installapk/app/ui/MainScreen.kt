@@ -55,7 +55,22 @@ fun MainScreen(
                         tempToken = uiState.token
                         showTokenDialog = true
                     }) {
-                        Icon(Icons.Default.Key, contentDescription = "GitHub Token")
+                        val isInvalid = uiState.tokenValidation?.isValid == false
+                        BadgedBox(
+                            badge = {
+                                if (isInvalid) {
+                                    Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                        Text("!")
+                                    }
+                                }
+                            }
+                        ) {
+                            Icon(
+                                Icons.Default.Key,
+                                contentDescription = "GitHub Token",
+                                tint = if (isInvalid) MaterialTheme.colorScheme.error else LocalContentColor.current
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -148,6 +163,97 @@ fun MainScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Bandeau d'alerte Token expiré / invalide
+            val validation = uiState.tokenValidation
+            if (validation != null && !validation.isValid) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.ErrorOutline,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Clé GitHub Invalide ou Expirée !",
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = validation.errorMessage ?: "Votre clé GitHub (PAT) n'est plus acceptée par l'API.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Alerte envoyée vers : ${uiState.alertEmail}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = {
+                                    tempToken = uiState.token
+                                    showTokenDialog = true
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error
+                                )
+                            ) {
+                                Text("Remplacer la clé")
+                            }
+                        }
+                    }
+                }
+            } else if (validation != null && validation.isValid) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Clé GitHub Active (${validation.username})",
+                                    fontWeight = FontWeight.SemiBold,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                if (!validation.expirationDate.isNullOrBlank()) {
+                                    Text(
+                                        "Expiration : ${validation.expirationDate}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -209,6 +315,12 @@ fun MainScreen(
                         label = { Text("GitHub Token (ghp_...)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Email de notification en cas d'expiration : ${uiState.alertEmail}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             },
