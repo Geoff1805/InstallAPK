@@ -30,6 +30,7 @@
      - **Dependabot security updates** : Toujours activé (`On`) pour générer automatiquement les correctifs de sécurité.
      - **Configuration Dependabot (`.github/dependabot.yml`)** : Systématiquement présent à la racine du dépôt pour automatiser la surveillance et la mise à jour des écosystèmes du projet (ex. `gradle`, `github-actions`, etc.).
   3. **Vérification & activation automatique** : Lors de la création, maintenance ou inspection d'un dépôt GitHub, l'agent doit vérifier l'état de ces fonctionnalités (notamment via l'API GitHub `PUT /repos/{owner}/{repo}/vulnerability-alerts` et `PUT /repos/{owner}/{repo}/automated-security-fixes`) et s'assurer que `.github/dependabot.yml` est en place.
+  4. **Éradication des 51 alertes Dependabot dues à Foojay** : Dans tous les projets Android/Gradle, ne jamais inclure `org.gradle.toolchains.foojay-resolver-convention` dans `settings.gradle.kts` (et le supprimer immédiatement s'il est présent). Ce plugin superflu charge des dizaines de dépendances transitives obsolètes (Netty, Bouncy Castle, Apache HttpClient, JDOM2, Jose4j, etc.) responsables de 51 alertes de sécurité Dependabot dans les dépôts GitHub. Le JDK est déjà garanti par le runner CI (`actions/setup-java`) et l'environnement local.
 
 
 ## Architecture & Fonctionnalités Clés
