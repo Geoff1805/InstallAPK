@@ -54,3 +54,13 @@
   - Éléments in-app : Intégrer l'icône dans l'UI (ex. barre d'action / en-tête) pour renforcer l'identité de marque.
   - Proscription formelle des icônes par défaut ou génériques.
 
+## Qualité CI/CD, Actions GitHub & Zéro Avertissement / Zéro Dépréciation (/learn)
+- **Règle absolue (/learn)** : Tous les workflows GitHub Actions créés ou maintenus doivent s'exécuter avec **zéro avertissement (0 warning), zéro notice de dépréciation et zéro paramètre inattendu** :
+  1. **Validation stricte des paramètres (Inputs)** :
+     - Toujours vérifier la signature exacte (`action.yml`) des actions tierces utilisées. Ne jamais inventer ou supposer les clés d'entrée (`with:`) pour éviter les alertes `Unexpected input(s)`.
+  2. **Interdiction des actions sur runtimes Node obsolètes / dépréciés** :
+     - Ne jamais utiliser d'actions tierces obsolètes ou abandonnées ciblant des versions de Node.js dépréciées (ex. Node 16, Node 20 sur runners Node 24).
+     - Toujours utiliser les versions majeures à jour des actions officielles maintenues (ex: `actions/checkout`, `actions/setup-java`, etc.).
+     - Pour la mise à jour du Gradle Wrapper : **ne pas utiliser d'actions Node tierces non maintenues** (comme `gradle-update/update-gradle-wrapper-action@v2`). Utiliser systématiquement un step natif autonome (`./gradlew wrapper` avec interrogation de l'API Gradle `https://services.gradle.org/versions/current` et `gh pr create` via la CLI GitHub native du runner).
+  3. **Stabilité des images Runners** :
+     - Éviter les notices informatives de transition de labels (ex. avertissement de migration de `ubuntu-latest` vers Ubuntu 26) en privilégiant des runners LTS explicitement versionnés (ex. `ubuntu-24.04`) ou s'assurer de leur conformité anticipée.
