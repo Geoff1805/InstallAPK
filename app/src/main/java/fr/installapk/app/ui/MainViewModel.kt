@@ -74,17 +74,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(needsInstallPermission = !hasPermission) }
     }
 
+    fun refreshInstalledPackageStatuses() {
+        _uiState.update { state ->
+            state.copy(
+                apps = state.apps.map { repository.refreshSingleAppInstalledStatus(it) }
+            )
+        }
+    }
+
     fun refreshApps() {
         val currentToken = _uiState.value.token
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            val currentList = _uiState.value.apps.ifEmpty { repository.getInitialProjects() }
-
             validateCurrentToken()
 
-            val updatedList = currentList.map { app ->
-                repository.fetchLatestAppInfo(app, currentToken)
-            }
+            val updatedList = repository.discoverAndRefreshApps(currentToken)
 
             _uiState.update {
                 it.copy(

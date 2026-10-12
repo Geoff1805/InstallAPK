@@ -59,8 +59,19 @@ fun MainScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.refreshApps() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Rafraîchir")
+                    IconButton(
+                        onClick = { viewModel.refreshApps() },
+                        enabled = !uiState.isLoading
+                    ) {
+                        if (uiState.isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = "Rafraîchir")
+                        }
                     }
                     IconButton(onClick = {
                         tempToken = uiState.token
