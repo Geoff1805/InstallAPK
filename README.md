@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="app/src/main/ic_launcher-web.png" width="120" alt="InstallAPK Logo" />
+</p>
+
 # 📲 InstallAPK (GitHub Android Updater)
 
 > **Application Android pour installer et mettre à jour automatiquement vos applications GitHub en 1 clic.**

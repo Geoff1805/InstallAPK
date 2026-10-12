@@ -47,3 +47,10 @@
 ## Conventions
 - Langue des réponses : Français concis avec liens cliquables `file:///` vers les fichiers modifiés.
 - Respect strict de la signature Android : Keystore de debug persistant partagé ou keystore dédié.
+
+## Identité Visuelle & Icônes Modernes (/learn)
+- **Règle absolue (/learn)** : Toujours concevoir et intégrer une icône moderne pour toute application et tout site web :
+  - Applications Android : Adaptive icons (API 26+) complets (foreground + background), mipmaps toutes densités (`mdpi` à `xxxhdpi`), icône ronde (`ic_launcher_round`), et haute résolution (512x512).
+  - Éléments in-app : Intégrer l'icône dans l'UI (ex. barre d'action / en-tête) pour renforcer l'identité de marque.
+  - Proscription formelle des icônes par défaut ou génériques.
+
