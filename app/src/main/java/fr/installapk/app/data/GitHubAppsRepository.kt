@@ -4,18 +4,25 @@ import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Base64
+import android.util.Log
 import fr.installapk.app.model.ProjectApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 
 class GitHubAppsRepository(private val context: Context) {
+
+    private val tag = "GitHubAppsRepository"
+    private val prefs = context.getSharedPreferences("installapk_prefs", Context.MODE_PRIVATE)
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -57,26 +64,64 @@ class GitHubAppsRepository(private val context: Context) {
     )
 
     fun getInitialProjects(): List<ProjectApp> {
-        return defaultProjects.map { app ->
-            val installed = getInstalledPackageInfo(app.packageName)
-            if (installed != null) {
-                val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    installed.longVersionCode
-                } else {
-                    @Suppress("DEPRECATION")
-                    installed.versionCode.toLong()
+        val merged = mutableListOf<ProjectApp>()
+        merged.addAll(defaultProjects)
+
+        // Charger les projets découverts depuis le cache SharedPreferences
+        val cachedDiscoveredJson = prefs.getString("cached_discovered_apps", null)
+        if (!cachedDiscoveredJson.isNullOrBlank()) {
+            try {
+                val jsonArray = JSONArray(cachedDiscoveredJson)
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    val id = obj.getString("id")
+                    if (merged.none { it.id.equals(id, ignoreCase = true) }) {
+                        merged.add(
+                            ProjectApp(
+                                id = id,
+                                repoOwner = obj.getString("repoOwner"),
+                                repoName = obj.getString("repoName"),
+                                packageName = obj.getString("packageName"),
+                                displayName = obj.optString("displayName", id),
+                                description = obj.optString("description", "Application Android GitHub"),
+                                iconEmoji = obj.optString("iconEmoji", "📱"),
+                                isSelf = obj.optBoolean("isSelf", false),
+                                artifactPattern = obj.optString("artifactPattern", "apk")
+                            )
+                        )
+                    }
                 }
-                app.copy(
-                    installedVersionCode = vCode,
-                    installedVersionName = installed.versionName
-                )
-            } else {
-                app
+            } catch (e: Exception) {
+                Log.w(tag, "Erreur lecture cache projets découverts: ${e.message}")
             }
+        }
+
+        return merged.map { refreshSingleAppInstalledStatus(it) }
+    }
+
+    fun refreshSingleAppInstalledStatus(app: ProjectApp): ProjectApp {
+        val installed = getInstalledPackageInfo(app.packageName)
+        return if (installed != null) {
+            val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                installed.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                installed.versionCode.toLong()
+            }
+            app.copy(
+                installedVersionCode = vCode,
+                installedVersionName = installed.versionName
+            )
+        } else {
+            app.copy(
+                installedVersionCode = null,
+                installedVersionName = null
+            )
         }
     }
 
     private fun getInstalledPackageInfo(packageName: String): PackageInfo? {
+        if (packageName.isBlank()) return null
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 context.packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
@@ -84,7 +129,7 @@ class GitHubAppsRepository(private val context: Context) {
                 @Suppress("DEPRECATION")
                 context.packageManager.getPackageInfo(packageName, 0)
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -145,9 +190,269 @@ class GitHubAppsRepository(private val context: Context) {
         }
     }
 
+    suspend fun discoverAndRefreshApps(token: String): List<ProjectApp> = withContext(Dispatchers.IO) {
+        val discoveredProjects = discoverAndroidProjects(token)
+
+        // Fusion des projets par défaut et découverts
+        val allProjects = mutableListOf<ProjectApp>()
+        allProjects.addAll(defaultProjects)
+
+        for (discovered in discoveredProjects) {
+            val index = allProjects.indexOfFirst { it.id.equals(discovered.id, ignoreCase = true) }
+            if (index >= 0) {
+                // Mettre à jour avec le package name résolu si besoin
+                val existing = allProjects[index]
+                if (existing.packageName.isBlank() && discovered.packageName.isNotBlank()) {
+                    allProjects[index] = existing.copy(packageName = discovered.packageName)
+                }
+            } else {
+                allProjects.add(discovered)
+            }
+        }
+
+        // Sauvegarder dans le cache pour les prochains démarrages
+        saveDiscoveredProjectsCache(allProjects)
+
+        // Récupérer les informations de version et d'artefact pour chaque application
+        allProjects.map { app ->
+            fetchLatestAppInfo(app, token)
+        }
+    }
+
+    private suspend fun discoverAndroidProjects(token: String): List<ProjectApp> = withContext(Dispatchers.IO) {
+        val projects = mutableListOf<ProjectApp>()
+        try {
+            val authVal = if (token.isNotBlank()) {
+                if (token.startsWith("Bearer ") || token.startsWith("token ")) token else "Bearer $token"
+            } else null
+
+            // Récupération des dépôts de l'utilisateur
+            val reposUrl = if (authVal != null) {
+                "https://api.github.com/user/repos?affiliation=owner&sort=updated&per_page=100"
+            } else {
+                "https://api.github.com/users/Geoff1805/repos?sort=updated&per_page=100"
+            }
+
+            val reqBuilder = Request.Builder()
+                .url(reposUrl)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "InstallAPK-Android-Discovery")
+
+            if (authVal != null) {
+                reqBuilder.header("Authorization", authVal)
+            }
+
+            val response = client.newCall(reqBuilder.build()).execute()
+            if (!response.isSuccessful) {
+                Log.w(tag, "Échec découverte dépôts: code ${response.code}")
+                return@withContext emptyList()
+            }
+
+            val bodyStr = response.body?.string() ?: return@withContext emptyList()
+            val reposArray = JSONArray(bodyStr)
+
+            for (i in 0 until reposArray.length()) {
+                val repo = reposArray.getJSONObject(i)
+                val isArchived = repo.optBoolean("archived", false)
+                if (isArchived) continue
+
+                val repoName = repo.getString("name")
+                val ownerObj = repo.getJSONObject("owner")
+                val repoOwner = ownerObj.getString("login")
+                val description = repo.optString("description", "")
+                val language = repo.optString("language", "")
+                val topicsArray = repo.optJSONArray("topics")
+
+                var hasAndroidTopic = false
+                if (topicsArray != null) {
+                    for (t in 0 until topicsArray.length()) {
+                        val topic = topicsArray.optString(t, "").lowercase()
+                        if (topic.contains("android") || topic.contains("apk")) {
+                            hasAndroidTopic = true
+                            break
+                        }
+                    }
+                }
+
+                val isKnown = defaultProjects.any { it.repoName.equals(repoName, ignoreCase = true) }
+                val isKotlinOrJava = language.equals("Kotlin", ignoreCase = true) || language.equals("Java", ignoreCase = true)
+
+                // Vérifier si le projet est Android ou s'il a un APK
+                var isAndroidProject = isKnown || hasAndroidTopic || isKotlinOrJava
+                if (!isAndroidProject) {
+                    // Vérifier si des artefacts APK existent
+                    isAndroidProject = checkHasApkArtifacts(repoOwner, repoName, token)
+                }
+
+                if (isAndroidProject) {
+                    val resolvedPackageName = resolvePackageName(repoOwner, repoName, token)
+                    val emoji = determineEmoji(repoName, description)
+                    val isSelf = repoName.equals("InstallAPK", ignoreCase = true)
+
+                    projects.add(
+                        ProjectApp(
+                            id = repoName,
+                            repoOwner = repoOwner,
+                            repoName = repoName,
+                            packageName = resolvedPackageName,
+                            displayName = repoName,
+                            description = if (description.isNotBlank()) description else "Application Android GitHub",
+                            iconEmoji = emoji,
+                            isSelf = isSelf,
+                            artifactPattern = "apk"
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Erreur découverte dépôts GitHub: ${e.message}", e)
+        }
+
+        projects
+    }
+
+    private fun checkHasApkArtifacts(owner: String, repo: String, token: String): Boolean {
+        return try {
+            val url = "https://api.github.com/repos/$owner/$repo/actions/artifacts?per_page=10"
+            val reqBuilder = Request.Builder()
+                .url(url)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "InstallAPK-Android")
+
+            if (token.isNotBlank()) {
+                val authVal = if (token.startsWith("Bearer ") || token.startsWith("token ")) token else "Bearer $token"
+                reqBuilder.header("Authorization", authVal)
+            }
+
+            val response = client.newCall(reqBuilder.build()).execute()
+            if (!response.isSuccessful) return false
+            val body = response.body?.string() ?: return false
+            val json = JSONObject(body)
+            val artifacts = json.optJSONArray("artifacts") ?: return false
+            for (i in 0 until artifacts.length()) {
+                val art = artifacts.getJSONObject(i)
+                val name = art.optString("name", "").lowercase()
+                if (name.contains("apk")) return true
+            }
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun resolvePackageName(owner: String, repo: String, token: String): String {
+        // 1. Vérifier dans le cache SharedPreferences
+        val cached = prefs.getString("pkg_$repo", null)
+        if (!cached.isNullOrBlank()) return cached
+
+        // 2. Vérifier les projets connus par défaut
+        val known = defaultProjects.firstOrNull { it.repoName.equals(repo, ignoreCase = true) }
+        if (known != null && known.packageName.isNotBlank()) {
+            prefs.edit().putString("pkg_$repo", known.packageName).apply()
+            return known.packageName
+        }
+
+        // 3. Tenter de lire app/build.gradle.kts depuis l'API GitHub
+        val extractedFromKts = fetchAndParsePackageFromBuildGradle(owner, repo, "app/build.gradle.kts", token)
+        if (!extractedFromKts.isNullOrBlank()) {
+            prefs.edit().putString("pkg_$repo", extractedFromKts).apply()
+            return extractedFromKts
+        }
+
+        // 4. Tenter de lire app/build.gradle (Groovy)
+        val extractedFromGroovy = fetchAndParsePackageFromBuildGradle(owner, repo, "app/build.gradle", token)
+        if (!extractedFromGroovy.isNullOrBlank()) {
+            prefs.edit().putString("pkg_$repo", extractedFromGroovy).apply()
+            return extractedFromGroovy
+        }
+
+        // 5. Fallback conventionnel
+        val sanitized = repo.lowercase().replace("-", "").replace("_", "")
+        val fallback = "fr.$sanitized.app"
+        return fallback
+    }
+
+    private fun fetchAndParsePackageFromBuildGradle(owner: String, repo: String, path: String, token: String): String? {
+        return try {
+            val url = "https://api.github.com/repos/$owner/$repo/contents/$path"
+            val reqBuilder = Request.Builder()
+                .url(url)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "InstallAPK-Android")
+
+            if (token.isNotBlank()) {
+                val authVal = if (token.startsWith("Bearer ") || token.startsWith("token ")) token else "Bearer $token"
+                reqBuilder.header("Authorization", authVal)
+            }
+
+            val response = client.newCall(reqBuilder.build()).execute()
+            if (!response.isSuccessful) return null
+            val body = response.body?.string() ?: return null
+            val json = JSONObject(body)
+            val contentBase64 = json.optString("content", "")
+            if (contentBase64.isBlank()) return null
+
+            val decodedBytes = Base64.decode(contentBase64, Base64.DEFAULT)
+            val text = String(decodedBytes, Charsets.UTF_8)
+
+            // Regex pour applicationId ou namespace
+            val appIdRegex = Regex("""applicationId\s*(?:=)?\s*["']([^"']+)["']""")
+            val matchAppId = appIdRegex.find(text)
+            if (matchAppId != null) {
+                return matchAppId.groupValues[1]
+            }
+
+            val namespaceRegex = Regex("""namespace\s*(?:=)?\s*["']([^"']+)["']""")
+            val matchNamespace = namespaceRegex.find(text)
+            matchNamespace?.groupValues?.get(1)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun determineEmoji(repoName: String, description: String): String {
+        val text = "${repoName.lowercase()} ${description.lowercase()}"
+        return when {
+            text.contains("bd") || text.contains("comic") || text.contains("manga") || text.contains("book") -> "📚"
+            text.contains("need") || text.contains("invent") || text.contains("course") || text.contains("stock") -> "📦"
+            text.contains("install") || text.contains("apk") || text.contains("updater") -> "📲"
+            text.contains("gmail") || text.contains("mail") || text.contains("courrier") -> "✉️"
+            text.contains("clean") || text.contains("nettoy") -> "🧹"
+            text.contains("camera") || text.contains("photo") -> "📷"
+            text.contains("audio") || text.contains("music") || text.contains("son") -> "🎵"
+            text.contains("game") || text.contains("jeu") -> "🎮"
+            text.contains("consult") || text.contains("sqe") || text.contains("audit") -> "💼"
+            text.contains("tool") || text.contains("util") -> "🛠️"
+            else -> "📱"
+        }
+    }
+
+    private fun saveDiscoveredProjectsCache(projects: List<ProjectApp>) {
+        try {
+            val jsonArray = JSONArray()
+            for (p in projects) {
+                val obj = JSONObject().apply {
+                    put("id", p.id)
+                    put("repoOwner", p.repoOwner)
+                    put("repoName", p.repoName)
+                    put("packageName", p.packageName)
+                    put("displayName", p.displayName)
+                    put("description", p.description)
+                    put("iconEmoji", p.iconEmoji)
+                    put("isSelf", p.isSelf)
+                    put("artifactPattern", p.artifactPattern)
+                }
+                jsonArray.put(obj)
+            }
+            prefs.edit().putString("cached_discovered_apps", jsonArray.toString()).apply()
+        } catch (e: Exception) {
+            Log.w(tag, "Erreur sauvegarde cache: ${e.message}")
+        }
+    }
+
     suspend fun fetchLatestAppInfo(app: ProjectApp, token: String): ProjectApp = withContext(Dispatchers.IO) {
         try {
-            val url = "https://api.github.com/repos/${app.repoOwner}/${app.repoName}/actions/artifacts?per_page=15"
+            val url = "https://api.github.com/repos/${app.repoOwner}/${app.repoName}/actions/artifacts?per_page=20"
             val reqBuilder = Request.Builder()
                 .url(url)
                 .header("Accept", "application/vnd.github+json")
@@ -167,7 +472,7 @@ class GitHubAppsRepository(private val context: Context) {
 
             val bodyStr = response.body?.string() ?: return@withContext app
             val json = JSONObject(bodyStr)
-            val artifacts = json.optJSONArray("artifacts") ?: return@withContext app
+            val artifacts = json.optJSONArray("artifacts") ?: JSONArray()
 
             var matchedArtifact: JSONObject? = null
             for (i in 0 until artifacts.length()) {
@@ -176,12 +481,26 @@ class GitHubAppsRepository(private val context: Context) {
                 val isExpired = art.optBoolean("expired", false)
                 if (isExpired) continue
 
-                if (name.contains(app.artifactPattern, ignoreCase = true) || 
-                    (app.artifactPattern == "apk" && name.contains("apk", ignoreCase = true))) {
+                val isApkMatch = name.contains("apk", ignoreCase = true) ||
+                    name.contains(app.artifactPattern, ignoreCase = true) ||
+                    name.contains(app.repoName, ignoreCase = true)
+
+                if (isApkMatch) {
                     matchedArtifact = art
                     break
                 }
             }
+
+            val installed = getInstalledPackageInfo(app.packageName)
+            val vCode = if (installed != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    installed.longVersionCode
+                } else {
+                    @Suppress("DEPRECATION")
+                    installed.versionCode.toLong()
+                }
+            } else null
+            val vName = installed?.versionName
 
             if (matchedArtifact != null) {
                 val artId = matchedArtifact.getLong("id")
@@ -191,23 +510,10 @@ class GitHubAppsRepository(private val context: Context) {
                 val workflowRun = matchedArtifact.optJSONObject("workflow_run")
                 val runId = workflowRun?.optLong("id")
 
-                // Récupération optionnelle du run_number pour le numéro de build
                 var runNumber: Long? = null
                 if (runId != null) {
                     runNumber = fetchRunNumber(app.repoOwner, app.repoName, runId, token)
                 }
-
-                val installed = getInstalledPackageInfo(app.packageName)
-                val vCode = if (installed != null) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        installed.longVersionCode
-                    } else {
-                        @Suppress("DEPRECATION")
-                        installed.versionCode.toLong()
-                    }
-                } else null
-
-                val vName = installed?.versionName
 
                 app.copy(
                     installedVersionCode = vCode,
@@ -221,10 +527,69 @@ class GitHubAppsRepository(private val context: Context) {
                     statusText = "Prêt"
                 )
             } else {
-                app.copy(statusText = "Aucun artefact APK trouvé")
+                // Tenter de chercher dans les Releases GitHub
+                val releaseApp = fetchLatestReleaseAppInfo(app, token, vCode, vName)
+                releaseApp ?: app.copy(
+                    installedVersionCode = vCode,
+                    installedVersionName = vName,
+                    statusText = "Aucun APK pour l'instant (En attente du build CI)"
+                )
             }
         } catch (e: Exception) {
             app.copy(statusText = "Erreur: ${e.message}")
+        }
+    }
+
+    private fun fetchLatestReleaseAppInfo(
+        app: ProjectApp,
+        token: String,
+        installedCode: Long?,
+        installedName: String?
+    ): ProjectApp? {
+        return try {
+            val url = "https://api.github.com/repos/${app.repoOwner}/${app.repoName}/releases?per_page=5"
+            val reqBuilder = Request.Builder()
+                .url(url)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "InstallAPK-Android")
+
+            if (token.isNotBlank()) {
+                val authVal = if (token.startsWith("Bearer ") || token.startsWith("token ")) token else "Bearer $token"
+                reqBuilder.header("Authorization", authVal)
+            }
+
+            val response = client.newCall(reqBuilder.build()).execute()
+            if (!response.isSuccessful) return null
+            val body = response.body?.string() ?: return null
+            val releases = JSONArray(body)
+            if (releases.length() == 0) return null
+
+            for (i in 0 until releases.length()) {
+                val rel = releases.getJSONObject(i)
+                val assets = rel.optJSONArray("assets") ?: continue
+                for (j in 0 until assets.length()) {
+                    val asset = assets.getJSONObject(j)
+                    val assetName = asset.optString("name", "")
+                    if (assetName.endsWith(".apk", ignoreCase = true)) {
+                        val downloadUrl = asset.getString("browser_download_url")
+                        val tagName = rel.optString("tag_name", "Release")
+                        val size = asset.optLong("size", 0L)
+                        val date = rel.optString("published_at", "")
+                        return app.copy(
+                            installedVersionCode = installedCode,
+                            installedVersionName = installedName,
+                            latestArtifactSize = size,
+                            latestArtifactDate = date,
+                            downloadUrl = downloadUrl,
+                            latestVersionName = tagName,
+                            statusText = "Release disponible"
+                        )
+                    }
+                }
+            }
+            null
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -247,7 +612,7 @@ class GitHubAppsRepository(private val context: Context) {
                 val runJson = JSONObject(bodyStr)
                 runJson.optLong("run_number")
             } else null
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -276,11 +641,10 @@ class GitHubAppsRepository(private val context: Context) {
             val contentLength = responseBody.contentLength()
             val inputStream = responseBody.byteStream()
 
-            // Sauvegarder le zip temporaire
-            val tempZipFile = File(context.cacheDir, "${app.id}_temp.zip")
-            if (tempZipFile.exists()) tempZipFile.delete()
+            val tempDownloadFile = File(context.cacheDir, "${app.id}_temp_download")
+            if (tempDownloadFile.exists()) tempDownloadFile.delete()
 
-            val fos = FileOutputStream(tempZipFile)
+            val fos = FileOutputStream(tempDownloadFile)
             val buffer = ByteArray(8192)
             var bytesRead: Int
             var totalRead = 0L
@@ -296,43 +660,99 @@ class GitHubAppsRepository(private val context: Context) {
             fos.close()
             inputStream.close()
 
-            // Dézipper et extraire le fichier .apk
             val updatesDir = File(context.filesDir, "updates")
             if (!updatesDir.exists()) updatesDir.mkdirs()
 
             val destinationApk = File(updatesDir, "${app.id}.apk")
             if (destinationApk.exists()) destinationApk.delete()
 
-            val zis = ZipInputStream(tempZipFile.inputStream())
-            var zipEntry = zis.nextEntry
-            var foundApk = false
+            // Vérifier si le fichier téléchargé est un ZIP ou directement un APK
+            val isZip = isZipFile(tempDownloadFile)
+            if (isZip) {
+                // Dézipper et extraire le fichier .apk contenu
+                val zis = ZipInputStream(tempDownloadFile.inputStream())
+                var zipEntry = zis.nextEntry
+                var foundApk = false
 
-            while (zipEntry != null) {
-                if (!zipEntry.isDirectory && zipEntry.name.endsWith(".apk", ignoreCase = true)) {
-                    val apkFos = FileOutputStream(destinationApk)
-                    val apkBuffer = ByteArray(8192)
-                    var count: Int
-                    while (zis.read(apkBuffer).also { count = it } != -1) {
-                        apkFos.write(apkBuffer, 0, count)
+                while (zipEntry != null) {
+                    if (!zipEntry.isDirectory && zipEntry.name.endsWith(".apk", ignoreCase = true)) {
+                        val apkFos = FileOutputStream(destinationApk)
+                        val apkBuffer = ByteArray(8192)
+                        var count: Int
+                        while (zis.read(apkBuffer).also { count = it } != -1) {
+                            apkFos.write(apkBuffer, 0, count)
+                        }
+                        apkFos.flush()
+                        apkFos.close()
+                        foundApk = true
+                        break
                     }
-                    apkFos.flush()
-                    apkFos.close()
-                    foundApk = true
-                    break
+                    zipEntry = zis.nextEntry
                 }
-                zipEntry = zis.nextEntry
-            }
-            zis.close()
-            tempZipFile.delete()
+                zis.close()
+                tempDownloadFile.delete()
 
-            if (foundApk && destinationApk.exists() && destinationApk.length() > 0) {
-                destinationApk
+                if (!foundApk || !destinationApk.exists() || destinationApk.length() == 0L) {
+                    return@withContext null
+                }
             } else {
-                null
+                // Le fichier téléchargé est déjà directement un APK
+                tempDownloadFile.copyTo(destinationApk, overwrite = true)
+                tempDownloadFile.delete()
             }
+
+            // Inspecter l'APK pour découvrir / confirmer le vrai packageName
+            try {
+                val archiveInfo = context.packageManager.getPackageArchiveInfo(destinationApk.absolutePath, 0)
+                if (archiveInfo != null && !archiveInfo.packageName.isNullOrBlank()) {
+                    prefs.edit().putString("pkg_${app.repoName}", archiveInfo.packageName).apply()
+                }
+            } catch (e: Exception) {
+                Log.w(tag, "Impossible d'inspecter l'archive APK: ${e.message}")
+            }
+
+            destinationApk
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(tag, "Erreur téléchargement/extraction APK: ${e.message}", e)
             null
+        }
+    }
+
+    private fun isZipFile(file: File): Boolean {
+        if (!file.exists() || file.length() < 4) return false
+        return try {
+            val fis = FileInputStream(file)
+            val header = ByteArray(4)
+            val read = fis.read(header)
+            fis.close()
+            read == 4 && header[0] == 0x50.toByte() && header[1] == 0x4B.toByte()
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun updateAppPackageInfoAfterInstall(app: ProjectApp, apkFile: File): ProjectApp {
+        return try {
+            val archiveInfo = context.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)
+            if (archiveInfo != null) {
+                val realPkg = archiveInfo.packageName ?: app.packageName
+                val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    archiveInfo.longVersionCode
+                } else {
+                    @Suppress("DEPRECATION")
+                    archiveInfo.versionCode.toLong()
+                }
+                val vName = archiveInfo.versionName
+                app.copy(
+                    packageName = realPkg,
+                    latestVersionCode = vCode,
+                    latestVersionName = vName
+                )
+            } else {
+                app
+            }
+        } catch (_: Exception) {
+            app
         }
     }
 }
