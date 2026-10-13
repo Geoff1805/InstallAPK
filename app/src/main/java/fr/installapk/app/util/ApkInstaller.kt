@@ -63,4 +63,42 @@ object ApkInstaller {
             false
         }
     }
+
+    /**
+     * Ouvre l'application cible via son intent de lancement standard.
+     */
+    fun openApp(context: Context, packageName: String): Boolean {
+        if (packageName.isBlank()) return false
+        return try {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(launchIntent)
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    /**
+     * Déclenche la désinstallation native de l'application via l'intent système Android.
+     */
+    fun uninstallApp(context: Context, packageName: String): Boolean {
+        if (packageName.isBlank()) return false
+        return try {
+            val intent = Intent(Intent.ACTION_DELETE).apply {
+                data = Uri.parse("package:$packageName")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
 }
