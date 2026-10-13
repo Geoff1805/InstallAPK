@@ -67,13 +67,15 @@
      - Éviter les notices informatives de transition de labels (ex. avertissement de migration de `ubuntu-latest` vers Ubuntu 26) en privilégiant des runners LTS explicitement versionnés (ex. `ubuntu-24.04`) ou s'assurer de leur conformité anticipée.
 
 ## Normalisation des Noms d'APK et Zéro ZIP Superflu (/learn)
-- **Règle absolue (/learn)** : Pour tous les projets Android actuels et futurs (`InstallAPK`, `Bullix`, `Needix`, etc.), le nom de l'APK compilé doit être strictement normalisé et directement installable :
-  1. **Nommage normalisé simple `<AppName>.apk`** :
-     - Tout artefact ou fichier APK produit par la CI/CD et distribué doit porter exclusivement le nom clair de l'application : **`<AppName>.apk`** (ex: `InstallAPK.apk`, `Bullix.apk`, `Needix.apk`).
-     - Proscrire les noms à rallonge hétérogènes ou suffixes confus (`-release-apk`, `-debug-apk`, `app-release.apk`, `Needix-Debug-APK`).
-  2. **Zéro ZIP superflu (APK brut directement téléchargeable)** :
-     - Les APKs doivent être mis à disposition directement sous leur format `.apk` natif sans compression ou encapsulation zip superflue (notamment via les GitHub Releases où le fichier `.apk` est immédiatement cliquable et installable par l'utilisateur).
-     - Dans les workflows CI/CD, copier ou renommer systématiquement l'APK compilé vers `<AppName>.apk` avant publication d'artefact ou de release.
-  3. **Détection robuste et priorité absolue à la fraîcheur dans InstallAPK** :
-     - L'application `InstallAPK` doit trier les artefacts GitHub prioritairement par **date de création (`created_at`) décroissante** afin de toujours sélectionner le build le plus récent (et non pas privilégier arbitrairement un vieux mot-clé "release" sur un build debug tout frais).
-     - Le filtre de détection doit reconnaître universellement les motifs `<AppName>.apk`, `<AppName>` ou tout artefact contenant le nom de l'application et l'extension `.apk`.
+- **Règle absolue (/learn)** : Pour **TOUTES les applications existantes et TOUTES les nouvelles applications futures sans exception** (Android natif, Kotlin Multiplatform, Flutter, React Native, etc., incluant `InstallAPK`, `Bullix`, `Needix`, `AntigravityController`, etc.) :
+  1. **Nommage normalisé strict `<AppName>.apk` dès la création** :
+     - Dès l'initialisation, le premier commit ou la mise en place de la CI/CD de **toute nouvelle application**, l'APK produit et distribué doit porter exclusivement et obligatoirement le nom exact de l'application : **`<AppName>.apk`** (ex: `InstallAPK.apk`, `Bullix.apk`, `Needix.apk`, `AntigravityController.apk`).
+     - Proscription formelle et absolue des noms par défaut des frameworks ou suffixes hétérogènes (`app-release.apk`, `app-debug.apk`, `-release-apk`, `-debug-apk`, `Needix-Debug-APK`, etc.) dans les artefacts et les releases.
+  2. **Zéro ZIP superflu (Binaire APK brut directement installable)** :
+     - Les APKs doivent être mis à disposition directement sous leur format `.apk` natif sans aucune compression ou encapsulation zip superflue.
+     - Dans les GitHub Releases, le fichier `.apk` doit être immédiatement cliquable et téléchargeable depuis un smartphone pour une installation en un clic via `InstallAPK` ou le navigateur.
+     - Dans les workflows CI/CD (`.github/workflows/*.yml`), toujours copier ou renommer l'APK compilé vers `build-artifacts/<AppName>.apk` avant les étapes d'upload d'artefact et de publication de release.
+  3. **Détection automatique et intégration dans InstallAPK** :
+     - Toute nouvelle application Android/mobile doit être compatible et immédiatement reconnue par `InstallAPK`.
+     - `InstallAPK` trie les artefacts GitHub prioritairement par **date de création (`created_at`) décroissante** afin de toujours garantir l'installation du build le plus récent.
+     - Les téléchargements depuis les dépôts privés s'effectuent via l'endpoint de l'API GitHub (`/releases/assets/{id}`) avec l'en-tête `Accept: application/octet-stream` pour éviter toute erreur 404.
