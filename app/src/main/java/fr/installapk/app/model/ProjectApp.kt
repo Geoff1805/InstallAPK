@@ -33,34 +33,65 @@ data class ProjectApp(
         get() {
             if (!isInstalled || downloadUrl == null) return false
 
-            // 1. Si cet artefact précis a déjà été installé avec succès
+            val hasInstalledCode = installedVersionCode != null && installedVersionCode > 0
+            val hasLatestCode = latestVersionCode != null && latestVersionCode > 0
+
+            // 1. CRITÈRE PRIORITAIRE ANDROID : Le versionCode officiel
+            // Si les deux versions ont un versionCode valide, c'est l'arbitre absolu du système Android
+            if (hasInstalledCode && hasLatestCode) {
+                if (installedVersionCode!! < latestVersionCode!!) {
+                    // Le code installé est inférieur au code disponible -> Mise à jour REQUISE
+                    return false
+                }
+                if (installedVersionCode!! > latestVersionCode!!) {
+                    // Le code installé est supérieur (version locale / dev plus avancée) -> À jour
+                    return true
+                }
+                // Si installedVersionCode == latestVersionCode :
+                // Les codes sont identiques. On examine si un nouvel artefact/build a été produit ou si le nom a changé.
+            }
+
+            // 2. CRITÈRE SÉMANTIQUE : versionName
+            // Uniquement si les deux versions sont dans un format sémantique (ex: "1.0.12" vs "1.0.10")
+            // et ne sont pas des identifiants de builds bruts (ex: "Run #42")
+            val cleanInstalled = cleanVersion(installedVersionName)
+            val cleanLatest = cleanVersion(latestVersionName)
+            val isInstalledSem = isSemanticVersion(cleanInstalled)
+            val isLatestSem = isSemanticVersion(cleanLatest)
+
+            if (isInstalledSem && isLatestSem) {
+                val semCmp = compareSemanticVersions(cleanInstalled, cleanLatest)
+                if (semCmp != null) {
+                    if (semCmp < 0) {
+                        // Version installée sémantiquement inférieure -> Mise à jour REQUISE
+                        return false
+                    }
+                    if (semCmp > 0) {
+                        return true
+                    }
+                }
+            }
+
+            // 3. CRITÈRE PAR IDENTIFIANT D'ARTEFACT INSTALLÉ
+            // Si cet artefact précis a déjà été installé avec succès sur le téléphone
             if (latestArtifactId != null && lastInstalledArtifactId != null && latestArtifactId == lastInstalledArtifactId) {
                 return true
             }
 
-            // 2. Normalisation et comparaison robuste des noms de version (ex: "v1.0.9" vs "1.0.9")
-            val cleanInstalled = cleanVersion(installedVersionName)
-            val cleanLatest = cleanVersion(latestVersionName)
-            if (cleanInstalled.isNotBlank() && cleanLatest.isNotBlank()) {
-                if (cleanInstalled.equals(cleanLatest, ignoreCase = true)) {
+            // 4. CRITÈRE HORODATAGE (Détection des nouveaux builds CI même sans bump de version)
+            // Si l'artefact GitHub a été compilé après la date d'installation sur le téléphone (+ marge 60s)
+            if (installedUpdateTime != null && artifactTimestamp != null) {
+                if (artifactTimestamp > (installedUpdateTime + 60_000L)) {
+                    // Nouvel APK compilé plus récemment sur GitHub -> Mise à jour disponible
+                    return false
+                } else {
                     return true
                 }
-                val semCmp = compareSemanticVersions(cleanInstalled, cleanLatest)
-                if (semCmp != null) {
-                    if (semCmp >= 0) return true
-                    if (semCmp < 0) return false
-                }
             }
 
-            // 3. Si le versionCode réel est disponible sur les deux
-            if (latestVersionCode != null && installedVersionCode != null && latestVersionCode > 0 && installedVersionCode > 0) {
-                if (installedVersionCode >= latestVersionCode) return true
-                if (installedVersionCode < latestVersionCode) return false
-            }
-
-            // 4. Par horodatage : si l'application sur le téléphone a été installée après la création de l'artefact (marge 120s)
-            if (installedUpdateTime != null && artifactTimestamp != null) {
-                return installedUpdateTime >= (artifactTimestamp - 120_000L)
+            // 5. Par défaut, si les chaînes de version sont identiques et non vides
+            if (cleanInstalled.isNotBlank() && cleanLatest.isNotBlank() && cleanInstalled.equals(cleanLatest, ignoreCase = true)) {
+                return true
             }
 
             return false
@@ -83,13 +114,19 @@ data class ProjectApp(
                 .removePrefix("V")
                 .removePrefix("release-")
                 .removePrefix("Release-")
-                .removePrefix("Run #")
                 .trim()
         }
 
+        fun isSemanticVersion(v: String): Boolean {
+            if (v.isBlank() || v.startsWith("Run #", ignoreCase = true)) return false
+            // Doit contenir au moins un chiffre et optionnellement des points
+            return v.any { it.isDigit() } && !v.contains(" ")
+        }
+
         fun compareSemanticVersions(v1: String, v2: String): Int? {
-            val parts1 = v1.split(".").mapNotNull { it.trim().takeWhile { c -> c.isDigit() }.toIntOrNull() }
-            val parts2 = v2.split(".").mapNotNull { it.trim().takeWhile { c -> c.isDigit() }.toIntOrNull() }
+            // Extraction des blocs de nombres séparés par . ou -
+            val parts1 = v1.split(".", "-").mapNotNull { it.trim().takeWhile { c -> c.isDigit() }.toIntOrNull() }
+            val parts2 = v2.split(".", "-").mapNotNull { it.trim().takeWhile { c -> c.isDigit() }.toIntOrNull() }
             if (parts1.isEmpty() || parts2.isEmpty()) return null
             val maxLen = maxOf(parts1.size, parts2.size)
             for (i in 0 until maxLen) {

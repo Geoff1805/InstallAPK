@@ -36,6 +36,7 @@ fun MainScreen(
     var showAddRepoDialog by remember { mutableStateOf(false) }
     var showPlayProtectInfo by remember { mutableStateOf(false) }
     var appToForceReinstall by remember { mutableStateOf<ProjectApp?>(null) }
+    var appToUninstall by remember { mutableStateOf<ProjectApp?>(null) }
     var appToShowBuildInfo by remember { mutableStateOf<ProjectApp?>(null) }
     var tempToken by remember { mutableStateOf(uiState.token) }
     var newRepoName by remember { mutableStateOf("") }
@@ -535,7 +536,8 @@ fun MainScreen(
                     SelfAppCard(
                         app = selfApp,
                         onUpdate = { viewModel.updateSelfApp() },
-                        onRequestForceReinstall = { appToForceReinstall = selfApp }
+                        onRequestForceReinstall = { appToForceReinstall = selfApp },
+                        onUninstall = { appToUninstall = selfApp }
                     )
                 }
             }
@@ -631,6 +633,8 @@ fun MainScreen(
                 AppCard(
                     app = app,
                     onInstallOrUpdate = { viewModel.installOrUpdateApp(app) },
+                    onOpenApp = { viewModel.openApp(app) },
+                    onUninstallApp = { appToUninstall = app },
                     onRequestForceReinstall = { appToForceReinstall = app },
                     onOpenBuildStatus = { appToShowBuildInfo = app }
                 )
@@ -714,6 +718,83 @@ fun MainScreen(
             dismissButton = {
                 TextButton(onClick = { appToForceReinstall = null }) {
                     Text("Annuler")
+                }
+            }
+        )
+    }
+
+    // Dialogue de confirmation de désinstallation
+    if (appToUninstall != null) {
+        val targetApp = appToUninstall!!
+        AlertDialog(
+            onDismissRequest = { appToUninstall = null },
+            icon = {
+                Icon(
+                    Icons.Default.DeleteForever,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = { Text("Désinstaller ${targetApp.displayName} ?") },
+            text = {
+                Column {
+                    Text(
+                        "Voulez-vous désinstaller cette application de votre appareil ?",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "Package : ${targetApp.packageName}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Le système Android supprimera l'application et les données locales associées.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.uninstallApp(targetApp)
+                        appToUninstall = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Désinstaller")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { appToUninstall = null }) {
+                    Text("Annuler")
+                }
+            }
+        )
+    }
+
+    // Dialogue d'information / erreur
+    if (uiState.errorMessage != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.clearErrorMessage() },
+            icon = {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = { Text("Information") },
+            text = { Text(uiState.errorMessage ?: "") },
+            confirmButton = {
+                Button(onClick = { viewModel.clearErrorMessage() }) {
+                    Text("Compris")
                 }
             }
         )
@@ -820,7 +901,8 @@ fun MainScreen(
 fun SelfAppCard(
     app: ProjectApp,
     onUpdate: () -> Unit,
-    onRequestForceReinstall: () -> Unit
+    onRequestForceReinstall: () -> Unit,
+    onUninstall: () -> Unit
 ) {
     val isUpToDate = app.isUpToDate
     val hasUpdate = app.hasUpdateAvailable
@@ -934,6 +1016,17 @@ fun SelfAppCard(
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
+                            IconButton(
+                                onClick = onUninstall,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.DeleteOutline,
+                                    contentDescription = "Désinstaller InstallAPK",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
                     else -> {
@@ -969,6 +1062,8 @@ fun SelfAppCard(
 fun AppCard(
     app: ProjectApp,
     onInstallOrUpdate: () -> Unit,
+    onOpenApp: () -> Unit,
+    onUninstallApp: () -> Unit,
     onRequestForceReinstall: () -> Unit,
     onOpenBuildStatus: () -> Unit
 ) {
@@ -1073,7 +1168,7 @@ fun AppCard(
                             color = MaterialTheme.colorScheme.surfaceVariant
                         ) {
                             Text(
-                                "✓ À jour (v${app.installedVersionName})",
+                                "✓ À jour (v${app.installedVersionName ?: "?"})",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.primary,
@@ -1087,7 +1182,7 @@ fun AppCard(
                             color = MaterialTheme.colorScheme.errorContainer
                         ) {
                             Text(
-                                "⬆ Mise à jour disponible (v${app.installedVersionName} → v${app.latestVersionName})",
+                                "⬆ Mise à jour disponible (v${app.installedVersionName ?: "?"} → v${app.latestVersionName ?: "?"})",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
@@ -1117,6 +1212,13 @@ fun AppCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             // Ligne de détails et boutons d'action
+            val installedCodeStr = if (app.installedVersionCode != null && app.installedVersionCode > 0) " (build ${app.installedVersionCode})" else ""
+            val latestCodeStr = if (app.latestVersionCode != null && app.latestVersionCode > 0) " (build ${app.latestVersionCode})" else ""
+            val installedNameStr = if (app.installedVersionName.isNullOrBlank()) "" else "v${ProjectApp.cleanVersion(app.installedVersionName)}"
+            val latestNameStr = if (app.latestVersionName.isNullOrBlank()) "" else {
+                if (app.latestVersionName.startsWith("Run #", ignoreCase = true)) app.latestVersionName else "v${ProjectApp.cleanVersion(app.latestVersionName)}"
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1124,13 +1226,13 @@ fun AppCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (isInstalled) "Installé : v${app.installedVersionName} (build ${app.installedVersionCode})" else "Non installé sur le téléphone",
+                        text = if (isInstalled) "Installé : $installedNameStr$installedCodeStr" else "Non installé sur le téléphone",
                         style = MaterialTheme.typography.labelMedium,
                         color = if (isInstalled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
                     )
                     if (app.latestVersionName != null) {
                         Text(
-                            text = "Dernière CI : v${app.latestVersionName} (build ${app.latestVersionCode})",
+                            text = "Dernière CI : $latestNameStr$latestCodeStr",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -1146,7 +1248,7 @@ fun AppCard(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Boutons d'action contextuels et cohérents
+                // Boutons d'action contextuels
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     when {
                         // En cours de téléchargement
@@ -1201,42 +1303,52 @@ fun AppCard(
                             }
                         }
 
-                        // Déjà à jour : bouton désactivé "À jour" + icône discrète pour forcer si besoin
+                        // Déjà à jour : Bouton principal "Ouvrir" + bouton "Désinstaller" + bouton discret "Réinstaller"
                         isUpToDate -> {
-                            FilledTonalButton(
-                                onClick = { },
-                                enabled = false,
+                            Button(
+                                onClick = onOpenApp,
                                 shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.filledTonalButtonColors(
-                                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
                                 )
                             ) {
                                 Icon(
-                                    Icons.Default.Check,
+                                    Icons.Default.Launch,
                                     contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.primary
+                                    modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("À jour", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                Text("Ouvrir", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             }
 
-                            // Bouton discret pour réinstallation manuelle si besoin
+                            Spacer(modifier = Modifier.width(2.dp))
+
                             IconButton(
                                 onClick = onRequestForceReinstall,
-                                modifier = Modifier.size(36.dp)
+                                modifier = Modifier.size(34.dp)
                             ) {
                                 Icon(
                                     Icons.Default.Refresh,
                                     contentDescription = "Forcer la réinstallation",
                                     tint = MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = onUninstallApp,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.DeleteOutline,
+                                    contentDescription = "Désinstaller",
+                                    tint = MaterialTheme.colorScheme.error,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
 
-                        // Mise à jour disponible
+                        // Mise à jour disponible : Bouton principal "Mettre à jour" + bouton "Ouvrir" + bouton "Désinstaller"
                         hasUpdate -> {
                             Button(
                                 onClick = onInstallOrUpdate,
@@ -1254,9 +1366,36 @@ fun AppCard(
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Mettre à jour", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             }
+
+                            Spacer(modifier = Modifier.width(4.dp))
+
+                            FilledTonalButton(
+                                onClick = onOpenApp,
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Launch,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Ouvrir", fontSize = 12.sp)
+                            }
+
+                            IconButton(
+                                onClick = onUninstallApp,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.DeleteOutline,
+                                    contentDescription = "Désinstaller",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
 
-                        // Non installée
+                        // Non installée : Bouton "Installer"
                         !isInstalled -> {
                             Button(
                                 onClick = onInstallOrUpdate,

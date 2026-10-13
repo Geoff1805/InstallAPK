@@ -144,6 +144,11 @@ class GitHubAppsRepository(private val context: Context) {
                 lastInstalledArtifactId = lastInstalledArtId ?: app.lastInstalledArtifactId
             )
         } else {
+            // L'application n'est plus présente sur l'appareil
+            prefs.edit().apply {
+                remove("installed_artifact_id_${app.id}")
+                remove("installed_timestamp_${app.id}")
+            }.apply()
             app.copy(
                 packageName = effectivePkg,
                 installedVersionCode = null,
@@ -743,7 +748,7 @@ class GitHubAppsRepository(private val context: Context) {
                 val cachedApkCode = prefs.getLong("apk_vcode_${app.id}", -1L).takeIf { it != -1L }
                 val cachedApkName = prefs.getString("apk_vname_${app.id}", null)
 
-                val resolvedLatestCode = remoteVersion.first ?: cachedApkCode
+                val resolvedLatestCode = maxOf(remoteVersion.first ?: 0L, cachedApkCode ?: 0L).takeIf { it > 0L }
                 val resolvedLatestName = remoteVersion.second ?: cachedApkName ?: runNumber?.let { "Run #$it" }
                 val artTimestamp = parseIsoDateToMillis(artDate)
 
@@ -821,10 +826,11 @@ class GitHubAppsRepository(private val context: Context) {
                 val base64Content = json.optString("content", "").replace("\n", "").replace("\r", "")
                 if (base64Content.isNotBlank()) {
                     val decoded = String(android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT), Charsets.UTF_8)
-                    val codeRegex = Regex("""versionCode\s*=\s*(\d+)""")
-                    val nameRegex = Regex("""versionName\s*=\s*([^\r\n]+)""")
+                    val codeRegex = Regex("""(?i)version[._-]?code\s*[:=]\s*(\d+)""")
+                    val nameRegex = Regex("""(?i)version[._-]?name\s*[:=]\s*([^\r\n]+)""")
                     val code = codeRegex.find(decoded)?.groupValues?.get(1)?.toLongOrNull()
-                    val name = nameRegex.find(decoded)?.groupValues?.get(1)?.trim()
+                    val rawName = nameRegex.find(decoded)?.groupValues?.get(1)?.trim()
+                    val name = rawName?.removeSurrounding("\"")?.removeSurrounding("'")?.trim()
                     if (code != null || !name.isNullOrBlank()) {
                         return@withContext Pair(code, name)
                     }
@@ -880,8 +886,8 @@ class GitHubAppsRepository(private val context: Context) {
                     val base64Content = json.optString("content", "").replace("\n", "").replace("\r", "")
                     if (base64Content.isNotBlank()) {
                         val decoded = String(android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT), Charsets.UTF_8)
-                        val codeRegex = Regex("""versionCode\s*(?:=)?\s*(\d+)""")
-                        val nameRegex = Regex("""versionName\s*(?:=)?\s*["']([^"']+)["']""")
+                        val codeRegex = Regex("""(?i)versionCode\s*(?:=)?\s*\(?(\d+)\)?""")
+                        val nameRegex = Regex("""(?i)versionName\s*(?:=)?\s*["']([^"']+)["']""")
                         val code = codeRegex.find(decoded)?.groupValues?.get(1)?.toLongOrNull()
                         val name = nameRegex.find(decoded)?.groupValues?.get(1)?.trim()
                         if (code != null || !name.isNullOrBlank()) {

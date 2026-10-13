@@ -415,4 +415,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun continueQueueToNext() {
         processNextInQueue()
     }
+
+    /**
+     * Tente de lancer l'application installée.
+     */
+    fun openApp(app: ProjectApp): Boolean {
+        val context = getApplication<Application>()
+        val success = ApkInstaller.openApp(context, app.packageName)
+        if (!success) {
+            _uiState.update {
+                it.copy(errorMessage = "Impossible de lancer ${app.displayName}. L'application est-elle bien installée ?")
+            }
+        }
+        return success
+    }
+
+    /**
+     * Lance la procédure de désinstallation de l'application via le système Android.
+     */
+    fun uninstallApp(app: ProjectApp): Boolean {
+        val context = getApplication<Application>()
+        return ApkInstaller.uninstallApp(context, app.packageName)
+    }
+
+    fun clearErrorMessage() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
 }
