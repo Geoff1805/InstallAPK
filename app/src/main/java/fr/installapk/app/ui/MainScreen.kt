@@ -172,34 +172,72 @@ fun MainScreen(
                     when {
                         // Cas 1 : File d'attente de mise à jour active
                         isUpdatingAll -> {
+                            val nextApp = uiState.nextQueueApp
+                            val isWaiting = uiState.isWaitingForUserInstall
+                            val activeApp = uiState.activeApp
+
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Button(
-                                    onClick = { },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(56.dp),
-                                    shape = RoundedCornerShape(16.dp),
-                                    enabled = false,
-                                    colors = ButtonDefaults.buttonColors(
-                                        disabledContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        disabledContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                    )
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(22.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    val inQueue = uiState.updateQueue.size
-                                    Text(
-                                        text = if (inQueue > 0) "Mise à jour séquentielle ($inQueue en attente)..." else "Finalisation...",
-                                        fontWeight = FontWeight.SemiBold
-                                    )
+                                if (isWaiting && nextApp != null) {
+                                    // Bouton actif pour enchaîner directement sur l'application suivante
+                                    Button(
+                                        onClick = { viewModel.skipToNextInQueue() },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(56.dp),
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.primary
+                                        )
+                                    ) {
+                                        Icon(
+                                            Icons.Default.ArrowForward,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Installer suivante : ${nextApp.displayName} (${uiState.updateQueue.size})",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = { },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(56.dp),
+                                        shape = RoundedCornerShape(16.dp),
+                                        enabled = false,
+                                        colors = ButtonDefaults.buttonColors(
+                                            disabledContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                            disabledContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(22.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        val inQueue = uiState.updateQueue.size
+                                        Text(
+                                            text = when {
+                                                isWaiting -> "Installateur ouvert ($inQueue en attente)..."
+                                                activeApp != null -> "Téléchargement : ${activeApp.displayName}..."
+                                                inQueue > 0 -> "File en cours ($inQueue en attente)..."
+                                                else -> "Finalisation..."
+                                            },
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp
+                                        )
+                                    }
                                 }
+
                                 Spacer(modifier = Modifier.width(8.dp))
                                 IconButton(
                                     onClick = { viewModel.cancelQueue() },
@@ -389,36 +427,101 @@ fun MainScreen(
 
             // Bandeau de file d'attente séquentielle active
             if (uiState.isUpdatingAll || uiState.activeUpdateId != null) {
+                val activeApp = uiState.activeApp
+                val nextApp = uiState.nextQueueApp
+                val isWaitingInstall = uiState.isWaitingForUserInstall
+
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.primaryContainer
                         ),
-                        shape = RoundedCornerShape(14.dp)
+                        shape = RoundedCornerShape(16.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Mise à jour en file d'attente séquentielle",
-                                    fontWeight = FontWeight.Bold,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = MaterialTheme.colorScheme.primary
                                 )
-                                Text(
-                                    "Les APKs sont traités un à un pour une installation fluide sans conflit.",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = if (activeApp != null) "File active : ${activeApp.displayName}" else "Mise à jour en file d'attente",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Text(
+                                        text = when {
+                                            isWaitingInstall && nextApp != null -> "Installateur Android ouvert. Prêt pour l'app suivante."
+                                            isWaitingInstall -> "En attente de validation dans l'installateur Android..."
+                                            activeApp?.isUpdating == true -> "Téléchargement en cours..."
+                                            else -> "Traitement séquentiel un par un pour éviter les conflits."
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+
+                            if (nextApp != null || isWaitingInstall) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (nextApp != null) {
+                                        Button(
+                                            onClick = { viewModel.skipToNextInQueue() },
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(10.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = MaterialTheme.colorScheme.primary
+                                            )
+                                        ) {
+                                            Icon(
+                                                Icons.Default.ArrowForward,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                "Installer : ${nextApp.displayName}",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+
+                                    FilledTonalButton(
+                                        onClick = { viewModel.retryCurrentInQueue() },
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Refresh,
+                                            contentDescription = "Relancer",
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { viewModel.cancelQueue() },
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            contentColor = MaterialTheme.colorScheme.error
+                                        )
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Arrêter",
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

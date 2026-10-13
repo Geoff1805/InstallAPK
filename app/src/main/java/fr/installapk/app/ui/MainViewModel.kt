@@ -27,6 +27,7 @@ data class MainUiState(
     val isUpdatingAll: Boolean = false,
     val updateQueue: List<String> = emptyList(), // IDs des apps dans la file d'attente
     val activeUpdateId: String? = null,          // ID de l'app en cours de téléchargement/installation
+    val isWaitingForUserInstall: Boolean = false, // Vrai quand l'installateur système Android a été ouvert
     val needsInstallPermission: Boolean = false,
     val pendingInstallFile: File? = null,
     val errorMessage: String? = null
@@ -44,6 +45,15 @@ data class MainUiState(
                     .thenByDescending { it.isUpToDate }
                     .thenBy { it.displayName.lowercase() }
             )
+
+    val nextQueueApp: ProjectApp?
+        get() {
+            val nextId = updateQueue.firstOrNull() ?: return null
+            return apps.firstOrNull { it.id == nextId }
+        }
+
+    val activeApp: ProjectApp?
+        get() = activeUpdateId?.let { id -> apps.firstOrNull { it.id == id } }
 
     val pendingManagedUpdatesCount: Int
         get() = managedApps.count { it.needsInstallationOrUpdate }
@@ -111,8 +121,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         checkQueueProgressOnResume()
         // Deuxième passe après court délai pour garantir la prise en compte du nouveau package par l'OS
         viewModelScope.launch {
-            kotlinx.coroutines.delay(400)
+            kotlinx.coroutines.delay(600)
             refreshInstalledPackageStatuses()
+            checkQueueProgressOnResume()
         }
     }
 
@@ -126,23 +137,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun checkQueueProgressOnResume() {
         val state = _uiState.value
-        val activeId = state.activeUpdateId ?: return
+        val activeId = state.activeUpdateId
 
-        val app = state.apps.firstOrNull { it.id == activeId } ?: return
-        val freshApp = repository.refreshSingleAppInstalledStatus(app)
+        if (activeId != null) {
+            val app = state.apps.firstOrNull { it.id == activeId }
+            if (app != null) {
+                val freshApp = repository.refreshSingleAppInstalledStatus(app)
+                if (freshApp.isUpToDate) {
+                    // L'application active a bien été installée et est maintenant confirmée à jour !
+                    _uiState.update { s ->
+                        s.copy(
+                            apps = s.apps.map { if (it.id == activeId) freshApp.copy(statusText = "À jour", isUpdating = false, isQueued = false) else it },
+                            activeUpdateId = null,
+                            isWaitingForUserInstall = false
+                        )
+                    }
 
-        _uiState.update { s ->
-            s.copy(
-                apps = s.apps.map { if (it.id == activeId) freshApp.copy(statusText = if (freshApp.isUpToDate) "À jour" else "Installé") else it },
-                activeUpdateId = null
-            )
+                    if (state.updateQueue.isNotEmpty()) {
+                        processNextInQueue()
+                    } else {
+                        _uiState.update { it.copy(isUpdatingAll = false) }
+                    }
+                    return
+                }
+            }
         }
 
-        // Enchaîner avec la suite de la file d'attente s'il y a des apps en attente
-        if (state.updateQueue.isNotEmpty()) {
+        // Si la file d'attente globale est active et qu'aucune app n'est en cours, lancer la suivante
+        if (state.isUpdatingAll && state.activeUpdateId == null && state.updateQueue.isNotEmpty()) {
             processNextInQueue()
-        } else {
-            _uiState.update { it.copy(isUpdatingAll = false) }
         }
     }
 
@@ -301,6 +324,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         currentDownloadJob?.cancel()
         currentDownloadJob = viewModelScope.launch {
+            _uiState.update { state ->
+                state.copy(
+                    activeUpdateId = app.id,
+                    isWaitingForUserInstall = false,
+                    apps = state.apps.map {
+                        if (it.id == app.id) it.copy(isUpdating = true, isQueued = false, downloadProgress = 0f, statusText = "Téléchargement...") else it
+                    }
+                )
+            }
+
             val apkFile = repository.downloadAndExtractApk(app, currentToken) { progress ->
                 _uiState.update { state ->
                     state.copy(
@@ -312,18 +345,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (apkFile != null) {
+                repository.recordAppInstallationInitiated(app.id, app.latestArtifactId)
                 _uiState.update { state ->
                     state.copy(
+                        isWaitingForUserInstall = true,
                         apps = state.apps.map {
-                            if (it.id == app.id) it.copy(isUpdating = false, downloadProgress = 1f, statusText = "Prêt à installer") else it
+                            if (it.id == app.id) it.copy(isUpdating = false, downloadProgress = 1f, statusText = "Confirmation Android...") else it
                         }
                     )
                 }
-                repository.recordAppInstallationInitiated(app.id, app.latestArtifactId)
                 ApkInstaller.installApk(context, apkFile)
             } else {
                 _uiState.update { state ->
                     state.copy(
+                        isWaitingForUserInstall = false,
                         apps = state.apps.map {
                             if (it.id == app.id) it.copy(isUpdating = false, statusText = "Échec du téléchargement") else it
                         },
@@ -340,12 +375,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun skipToNextInQueue() {
+        val state = _uiState.value
+        val activeId = state.activeUpdateId
+        _uiState.update { s ->
+            s.copy(
+                apps = s.apps.map {
+                    if (it.id == activeId) it.copy(isUpdating = false, isQueued = false, statusText = "Prêt") else it
+                },
+                activeUpdateId = null,
+                isWaitingForUserInstall = false
+            )
+        }
+        processNextInQueue()
+    }
+
+    fun retryCurrentInQueue() {
+        val state = _uiState.value
+        val activeId = state.activeUpdateId ?: return
+        val app = state.apps.firstOrNull { it.id == activeId } ?: return
+        startDownloadAndInstall(app)
+    }
+
     fun cancelQueue() {
         currentDownloadJob?.cancel()
         _uiState.update { state ->
             state.copy(
                 isUpdatingAll = false,
                 activeUpdateId = null,
+                isWaitingForUserInstall = false,
                 updateQueue = emptyList(),
                 apps = state.apps.map {
                     if (it.isQueued || it.isUpdating) it.copy(isQueued = false, isUpdating = false, statusText = "Prêt") else it

@@ -25,8 +25,10 @@ class GitHubAppsRepository(private val context: Context) {
     private val prefs = context.getSharedPreferences("installapk_prefs", Context.MODE_PRIVATE)
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(45, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
     private val defaultProjects = listOf(
@@ -110,8 +112,18 @@ class GitHubAppsRepository(private val context: Context) {
     }
 
     fun refreshSingleAppInstalledStatus(app: ProjectApp): ProjectApp {
-        val effectivePkg = prefs.getString("pkg_${app.id}", null) ?: app.packageName
-        val installed = getInstalledPackageInfo(effectivePkg)
+        var effectivePkg = prefs.getString("pkg_${app.id}", null) ?: app.packageName
+        var installed = getInstalledPackageInfo(effectivePkg)
+
+        // Si non trouvé par le package name théorique, tenter une recherche de secours
+        if (installed == null) {
+            val foundPkg = findInstalledPackageForApp(app)
+            if (foundPkg != null) {
+                effectivePkg = foundPkg.packageName
+                prefs.edit().putString("pkg_${app.id}", effectivePkg).apply()
+                installed = foundPkg
+            }
+        }
 
         val lastInstalledArtId = prefs.getLong("installed_artifact_id_${app.id}", -1L).takeIf { it != -1L }
         val lastInstalledTime = prefs.getLong("installed_timestamp_${app.id}", -1L).takeIf { it != -1L }
@@ -139,6 +151,38 @@ class GitHubAppsRepository(private val context: Context) {
                 installedUpdateTime = null,
                 lastInstalledArtifactId = null
             )
+        }
+    }
+
+    private fun findInstalledPackageForApp(app: ProjectApp): PackageInfo? {
+        return try {
+            val pm = context.packageManager
+            val packages = pm.getInstalledPackages(0)
+            val searchKey = app.repoName.lowercase().replace("-", "").replace("_", "")
+            val appIdKey = app.id.lowercase().replace("-", "").replace("_", "")
+
+            // 1. Recherche par nom de paquet contenant les mots-clés de l'app
+            for (pkg in packages) {
+                val pkgName = pkg.packageName.lowercase()
+                if (pkgName.contains(searchKey) || pkgName.contains(appIdKey)) {
+                    return pkg
+                }
+            }
+
+            // 2. Recherche par label de l'application
+            for (pkg in packages) {
+                try {
+                    val appLabel = pm.getApplicationLabel(pkg.applicationInfo).toString().lowercase()
+                    if (appLabel.equals(app.displayName.lowercase(), ignoreCase = true) ||
+                        appLabel.contains(app.displayName.lowercase())
+                    ) {
+                        return pkg
+                    }
+                } catch (_: Exception) {}
+            }
+            null
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -376,7 +420,7 @@ class GitHubAppsRepository(private val context: Context) {
 
     private fun checkHasApkArtifacts(owner: String, repo: String, token: String): Boolean {
         return try {
-            val url = "https://api.github.com/repos/$owner/$repo/actions/artifacts?per_page=20"
+            val url = "https://api.github.com/repos/$owner/$repo/actions/artifacts?per_page=100"
             val reqBuilder = Request.Builder()
                 .url(url)
                 .header("Accept", "application/vnd.github+json")
@@ -596,7 +640,7 @@ class GitHubAppsRepository(private val context: Context) {
 
     suspend fun fetchLatestAppInfo(app: ProjectApp, token: String): ProjectApp = withContext(Dispatchers.IO) {
         try {
-            val url = "https://api.github.com/repos/${app.repoOwner}/${app.repoName}/actions/artifacts?per_page=20"
+            val url = "https://api.github.com/repos/${app.repoOwner}/${app.repoName}/actions/artifacts?per_page=100"
             val reqBuilder = Request.Builder()
                 .url(url)
                 .header("Accept", "application/vnd.github+json")
@@ -618,25 +662,7 @@ class GitHubAppsRepository(private val context: Context) {
             val json = JSONObject(bodyStr)
             val artifacts = json.optJSONArray("artifacts") ?: JSONArray()
 
-            var matchedArtifact: JSONObject? = null
-
-            // Priorité 1 : artefact correspondant au motif spécifique (ex: Needix-Debug-APK, installapk-debug-apk)
-            if (app.artifactPattern.isNotBlank() && !app.artifactPattern.equals("apk", ignoreCase = true)) {
-                for (i in 0 until artifacts.length()) {
-                    val art = artifacts.getJSONObject(i)
-                    val name = art.optString("name", "")
-                    val isExpired = art.optBoolean("expired", false)
-                    val size = art.optLong("size_in_bytes", 0L)
-                    if (isExpired || isExcludedArtifact(name) || size < 200_000L) continue
-
-                    if (name.contains(app.artifactPattern, ignoreCase = true)) {
-                        matchedArtifact = art
-                        break
-                    }
-                }
-            }
-
-            // Priorité 1.5 : Préférer un artefact Release (non-debuggable) s'il existe
+            val candidateArtifacts = mutableListOf<JSONObject>()
             for (i in 0 until artifacts.length()) {
                 val art = artifacts.getJSONObject(i)
                 val name = art.optString("name", "")
@@ -644,32 +670,48 @@ class GitHubAppsRepository(private val context: Context) {
                 val size = art.optLong("size_in_bytes", 0L)
                 if (isExpired || isExcludedArtifact(name) || size < 200_000L) continue
 
-                if (name.contains("release", ignoreCase = true) && name.contains("apk", ignoreCase = true)) {
-                    if (app.id.equals("InstallAPK", ignoreCase = true) || name.contains(app.repoName, ignoreCase = true)) {
-                        matchedArtifact = art
-                        break
-                    }
+                val hasPattern = app.artifactPattern.isNotBlank() && name.contains(app.artifactPattern, ignoreCase = true)
+                val hasApk = name.contains("apk", ignoreCase = true)
+                if (hasPattern || hasApk) {
+                    candidateArtifacts.add(art)
                 }
             }
 
-            // Priorité 2 : artefact contenant "apk" et taille > 200 Ko, non exclu
-            if (matchedArtifact == null) {
-                for (i in 0 until artifacts.length()) {
-                    val art = artifacts.getJSONObject(i)
-                    val name = art.optString("name", "")
-                    val isExpired = art.optBoolean("expired", false)
-                    val size = art.optLong("size_in_bytes", 0L)
-                    if (isExpired || isExcludedArtifact(name) || size < 200_000L) continue
-
-                    if (name.contains("apk", ignoreCase = true)) {
-                        matchedArtifact = art
-                        break
+            // Tri intelligent :
+            // 1. Branche 'main' ou 'master' en priorité
+            // 2. Artefact Release en priorité
+            // 3. Date de création la plus récente
+            var matchedArtifact: JSONObject? = candidateArtifacts
+                .sortedWith(
+                    compareByDescending<JSONObject> {
+                        val branch = it.optJSONObject("workflow_run")?.optString("head_branch", "") ?: ""
+                        branch.equals("main", ignoreCase = true) || branch.equals("master", ignoreCase = true)
                     }
+                    .thenByDescending {
+                        val name = it.optString("name", "")
+                        name.contains("release", ignoreCase = true)
+                    }
+                    .thenByDescending {
+                        val name = it.optString("name", "")
+                        app.artifactPattern.isNotBlank() && name.contains(app.artifactPattern, ignoreCase = true)
+                    }
+                    .thenByDescending {
+                        it.optString("created_at", "")
+                    }
+                )
+                .firstOrNull()
+
+            var effectivePkg = prefs.getString("pkg_${app.id}", null) ?: app.packageName
+            var installed = getInstalledPackageInfo(effectivePkg)
+            if (installed == null) {
+                val foundPkg = findInstalledPackageForApp(app)
+                if (foundPkg != null) {
+                    effectivePkg = foundPkg.packageName
+                    prefs.edit().putString("pkg_${app.id}", effectivePkg).apply()
+                    installed = foundPkg
                 }
             }
 
-            val effectivePkg = prefs.getString("pkg_${app.id}", null) ?: app.packageName
-            val installed = getInstalledPackageInfo(effectivePkg)
             val vCode = if (installed != null) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     installed.longVersionCode
@@ -816,7 +858,36 @@ class GitHubAppsRepository(private val context: Context) {
                     }
                 }
             }
-        } catch (_: Exception) {}
+        // 3. Tenter app/build.gradle.kts ou app/build.gradle
+        for (gradlePath in listOf("app/build.gradle.kts", "app/build.gradle")) {
+            try {
+                val url = "https://api.github.com/repos/$owner/$repo/contents/$gradlePath"
+                val reqBuilder = Request.Builder()
+                    .url(url)
+                    .header("Accept", "application/vnd.github+json")
+                    .header("User-Agent", "InstallAPK-Android")
+                if (token.isNotBlank()) {
+                    val authVal = if (token.startsWith("Bearer ") || token.startsWith("token ")) token else "Bearer $token"
+                    reqBuilder.header("Authorization", authVal)
+                }
+                val res = client.newCall(reqBuilder.build()).execute()
+                if (res.isSuccessful) {
+                    val bodyStr = res.body?.string() ?: ""
+                    val json = JSONObject(bodyStr)
+                    val base64Content = json.optString("content", "").replace("\n", "").replace("\r", "")
+                    if (base64Content.isNotBlank()) {
+                        val decoded = String(android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                        val codeRegex = Regex("""versionCode\s*(?:=)?\s*(\d+)""")
+                        val nameRegex = Regex("""versionName\s*(?:=)?\s*["']([^"']+)["']""")
+                        val code = codeRegex.find(decoded)?.groupValues?.get(1)?.toLongOrNull()
+                        val name = nameRegex.find(decoded)?.groupValues?.get(1)?.trim()
+                        if (code != null || !name.isNullOrBlank()) {
+                            return@withContext Pair(code, name)
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
 
         Pair(null, null)
     }
