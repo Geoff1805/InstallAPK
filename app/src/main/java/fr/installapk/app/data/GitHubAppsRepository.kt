@@ -636,6 +636,22 @@ class GitHubAppsRepository(private val context: Context) {
                 }
             }
 
+            // Priorité 1.5 : Préférer un artefact Release (non-debuggable) s'il existe
+            for (i in 0 until artifacts.length()) {
+                val art = artifacts.getJSONObject(i)
+                val name = art.optString("name", "")
+                val isExpired = art.optBoolean("expired", false)
+                val size = art.optLong("size_in_bytes", 0L)
+                if (isExpired || isExcludedArtifact(name) || size < 200_000L) continue
+
+                if (name.contains("release", ignoreCase = true) && name.contains("apk", ignoreCase = true)) {
+                    if (app.id.equals("InstallAPK", ignoreCase = true) || name.contains(app.repoName, ignoreCase = true)) {
+                        matchedArtifact = art
+                        break
+                    }
+                }
+            }
+
             // Priorité 2 : artefact contenant "apk" et taille > 200 Ko, non exclu
             if (matchedArtifact == null) {
                 for (i in 0 until artifacts.length()) {

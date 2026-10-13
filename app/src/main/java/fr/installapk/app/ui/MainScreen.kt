@@ -471,15 +471,21 @@ fun MainScreen(
                         if (showPlayProtectInfo) {
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                "ℹ️ Cet avertissement de Google Play Protect est tout à fait normal : vos applications sont compilées de manière privée par vos propres GitHub Actions et ne sont pas distribuées sur le Google Play Store public.",
+                                "ℹ️ Cet avertissement de Google Play Protect survient car vos applications sont compilées de manière privée sur vos propres GitHub Actions et ne proviennent pas du catalogue public du Play Store.",
                                 style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                "👉 Option 1 (Recommandée) : Lors de l'alerte rouge, appuyez sur « Plus de détails » (ou la petite flèche) puis sur « Installer quand même ».",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "👉 Pour continuer l'installation : appuyez sur « Plus de détails » puis sur « Installer quand même ».",
+                                "👉 Option 2 (Si aucun bouton n'apparaît / blocage strict) : Ouvrez Google Play Store > Photo de profil > Play Protect > Roue crantée ⚙️ en haut à droite > Désactivez temporairement « Analyser les applications avec Play Protect ».",
                                 style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.primary
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }

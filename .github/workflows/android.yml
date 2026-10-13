@@ -3,24 +3,12 @@ name: Android CI & Build APK
 on:
   push:
     branches: [ "main" ]
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
-      - 'docs/**'
   pull_request:
     branches: [ "main" ]
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
-      - 'docs/**'
   workflow_dispatch:
 
 permissions:
   contents: write
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   test-and-build:
@@ -44,35 +32,28 @@ jobs:
         run: |
           if [ -f gradlew ]; then chmod +x gradlew; fi
 
-      - name: Prepare Signing Keystore
-        env:
-          RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
-          STORE_PWD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PWD: ${{ secrets.KEY_PASSWORD }}
-          KEY_ALIAS_VAL: ${{ secrets.KEY_ALIAS }}
+      - name: Prepare Debug Keystore
         run: |
-          mkdir -p app
-          if [ -n "$RELEASE_KEYSTORE_B64" ]; then
-            echo "Restauration du Release Keystore sécurisé depuis les secrets GitHub..."
-            echo "$RELEASE_KEYSTORE_B64" | base64 -d > app/release.keystore
-            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/app/release.keystore" >> $GITHUB_ENV
-            echo "STORE_PASSWORD=$STORE_PWD" >> $GITHUB_ENV
-            echo "KEY_PASSWORD=$KEY_PWD" >> $GITHUB_ENV
-            echo "KEY_ALIAS=$KEY_ALIAS_VAL" >> $GITHUB_ENV
-          elif [ -f debug.keystore.base64 ]; then
+          if [ -f debug.keystore.base64 ]; then
+            mkdir -p app
             base64 -d debug.keystore.base64 > app/debug.keystore
+            echo "Keystore restauré depuis debug.keystore.base64"
           fi
 
-      - name: Build Debug APK
+      - name: Build Release and Debug APKs
         run: |
-          VERSION_CODE=$((1000 + ${{ github.run_number }}))
-          VERSION_NAME="1.0.${{ github.run_number }}"
-          echo "Building APK with versionCode=${VERSION_CODE}, versionName=${VERSION_NAME}"
-          ./gradlew assembleDebug -PappVersionCode="${VERSION_CODE}" -PappVersionName="${VERSION_NAME}"
+          ./gradlew assembleRelease assembleDebug
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: installapk-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 30
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v7
         with:
           name: installapk-debug-apk
           path: app/build/outputs/apk/debug/*.apk
-          retention-days: 7
+          retention-days: 30
