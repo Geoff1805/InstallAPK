@@ -19,6 +19,37 @@ data class ProjectApp(
     val latestArtifactDate: String? = null,
     val downloadUrl: String? = null,
     val isUpdating: Boolean = false,
+    val isQueued: Boolean = false,
     val downloadProgress: Float? = null, // 0.0 to 1.0
     val statusText: String? = null
-)
+) {
+    val isInstalled: Boolean
+        get() = !installedVersionName.isNullOrBlank()
+
+    val hasUpdateAvailable: Boolean
+        get() {
+            if (!isInstalled || downloadUrl == null) return false
+            if (latestVersionCode != null && installedVersionCode != null) {
+                return latestVersionCode > installedVersionCode
+            }
+            if (latestVersionName != null && installedVersionName != null) {
+                return latestVersionName != installedVersionName
+            }
+            return false
+        }
+
+    val isUpToDate: Boolean
+        get() {
+            if (!isInstalled || downloadUrl == null) return false
+            if (latestVersionCode != null && installedVersionCode != null) {
+                return installedVersionCode >= latestVersionCode
+            }
+            if (latestVersionName != null && installedVersionName != null) {
+                return installedVersionName == latestVersionName
+            }
+            return false
+        }
+
+    val needsInstallationOrUpdate: Boolean
+        get() = downloadUrl != null && (!isInstalled || hasUpdateAvailable)
+}

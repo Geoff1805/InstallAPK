@@ -31,6 +31,7 @@ fun MainScreen(
     var showTokenDialog by remember { mutableStateOf(false) }
     var showAddRepoDialog by remember { mutableStateOf(false) }
     var showPlayProtectInfo by remember { mutableStateOf(false) }
+    var appToForceReinstall by remember { mutableStateOf<ProjectApp?>(null) }
     var tempToken by remember { mutableStateOf(uiState.token) }
     var newRepoName by remember { mutableStateOf("") }
 
@@ -158,29 +159,124 @@ fun MainScreen(
                         }
                     }
 
-                    Button(
-                        onClick = { viewModel.updateAllApps() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        enabled = !uiState.isLoading && !uiState.isUpdatingAll,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        if (uiState.isUpdatingAll) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text("Mise à jour en cours...")
-                        } else {
-                            Icon(Icons.Default.Download, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Tout mettre à jour", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    val pendingCount = uiState.pendingUpdatesCount
+                    val isAllUpToDate = uiState.isAllUpToDate
+                    val isUpdatingAll = uiState.isUpdatingAll
+
+                    when {
+                        // Cas 1 : File d'attente de mise à jour active
+                        isUpdatingAll -> {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Button(
+                                    onClick = { },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(56.dp),
+                                    shape = RoundedCornerShape(16.dp),
+                                    enabled = false,
+                                    colors = ButtonDefaults.buttonColors(
+                                        disabledContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        disabledContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(22.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    val inQueue = uiState.updateQueue.size
+                                    Text(
+                                        text = if (inQueue > 0) "Mise à jour séquentielle ($inQueue en attente)..." else "Finalisation de la mise à jour...",
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                IconButton(
+                                    onClick = { viewModel.cancelQueue() },
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .background(
+                                            color = MaterialTheme.colorScheme.errorContainer,
+                                            shape = RoundedCornerShape(16.dp)
+                                        )
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Annuler la file",
+                                        tint = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                }
+                            }
+                        }
+
+                        // Cas 2 : Toutes les applications sont à jour (zéro réinstallation)
+                        isAllUpToDate -> {
+                            OutlinedButton(
+                                onClick = { },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(56.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                enabled = false,
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    disabledContentColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Toutes les applications sont à jour (${uiState.apps.size})",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 15.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
+                        // Cas 3 : Mises à jour ou installations en attente
+                        pendingCount > 0 -> {
+                            Button(
+                                onClick = { viewModel.updateAllApps() },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(56.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                enabled = !uiState.isLoading,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(Icons.Default.SystemUpdateAlt, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Tout mettre à jour ($pendingCount)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp
+                                )
+                            }
+                        }
+
+                        // Cas 4 : Aucune application ou état initial
+                        else -> {
+                            Button(
+                                onClick = { },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(56.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                enabled = false
+                            ) {
+                                Text("Aucune mise à jour requise")
+                            }
                         }
                     }
                 }
@@ -285,33 +381,40 @@ fun MainScreen(
                 }
             }
 
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSecondaryContainer
+            // Bandeau de file d'attente séquentielle active
+            if (uiState.isUpdatingAll || uiState.activeUpdateId != null) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        ),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "Synchronisation GitHub en un clic",
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Mise à jour en file d'attente séquentielle",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Text(
+                                    "Les APKs sont traités un à un pour une installation fluide sans conflit.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
                         }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Installe et met à jour automatiquement les APKs compilés par vos workflows GitHub Actions sans aucune copie manuelle.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
                     }
                 }
             }
@@ -368,7 +471,8 @@ fun MainScreen(
             items(uiState.apps, key = { it.id }) { app ->
                 AppCard(
                     app = app,
-                    onInstallOrUpdate = { viewModel.installOrUpdateApp(app) }
+                    onInstallOrUpdate = { viewModel.installOrUpdateApp(app) },
+                    onRequestForceReinstall = { appToForceReinstall = app }
                 )
             }
 
@@ -376,6 +480,37 @@ fun MainScreen(
                 Spacer(modifier = Modifier.height(32.dp))
             }
         }
+    }
+
+    // Dialogue de confirmation de réinstallation forcée
+    if (appToForceReinstall != null) {
+        val targetApp = appToForceReinstall!!
+        AlertDialog(
+            onDismissRequest = { appToForceReinstall = null },
+            title = { Text("Réinstaller ${targetApp.displayName} ?") },
+            text = {
+                Text(
+                    "Cette application est déjà à jour (v${targetApp.installedVersionName}). " +
+                        "Voulez-vous quand même forcer le téléchargement et la réinstallation de l'APK ?",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.installOrUpdateApp(targetApp, forceReinstall = true)
+                        appToForceReinstall = null
+                    }
+                ) {
+                    Text("Forcer la réinstallation")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { appToForceReinstall = null }) {
+                    Text("Annuler")
+                }
+            }
+        )
     }
 
     if (showAddRepoDialog) {
@@ -474,10 +609,14 @@ fun MainScreen(
 @Composable
 fun AppCard(
     app: ProjectApp,
-    onInstallOrUpdate: () -> Unit
+    onInstallOrUpdate: () -> Unit,
+    onRequestForceReinstall: () -> Unit
 ) {
-    val isInstalled = app.installedVersionName != null
-    val hasUpdate = isInstalled && app.latestVersionCode != null && app.installedVersionCode != null && app.latestVersionCode > app.installedVersionCode
+    val isInstalled = app.isInstalled
+    val isUpToDate = app.isUpToDate
+    val hasUpdate = app.hasUpdateAvailable
+    val isQueued = app.isQueued
+    val isUpdating = app.isUpdating
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -488,6 +627,7 @@ fun AppCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            // Ligne Titre + Emoji + Badge Auto-Update
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
@@ -536,16 +676,109 @@ fun AppCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Badge d'état de version (Material 3)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                when {
+                    isQueued -> {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                "⏳ En file d'attente",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    isUpdating -> {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                "⬇ Téléchargement en cours...",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    isUpToDate -> {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                "✓ À jour (v${app.installedVersionName})",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    hasUpdate -> {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.errorContainer
+                        ) {
+                            Text(
+                                "⬆ Mise à jour disponible (v${app.installedVersionName} → v${app.latestVersionName})",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    !isInstalled && app.downloadUrl != null -> {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.tertiaryContainer
+                        ) {
+                            Text(
+                                "Prêt à installer (v${app.latestVersionName ?: "?"})",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    else -> {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        ) {
+                            Text(
+                                "En attente du build CI",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
             Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Ligne de détails et boutons d'action
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (isInstalled) "Installé : v${app.installedVersionName} (build ${app.installedVersionCode})" else "Non installé sur le téléphone",
                         style = MaterialTheme.typography.labelMedium,
@@ -567,32 +800,158 @@ fun AppCard(
                     }
                 }
 
-                FilledTonalButton(
-                    onClick = onInstallOrUpdate,
-                    enabled = !app.isUpdating && app.downloadUrl != null,
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    if (app.isUpdating) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        val label = when {
-                            !isInstalled -> "Installer"
-                            hasUpdate -> "Mettre à jour"
-                            else -> "Réinstaller"
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Boutons d'action contextuels
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    when {
+                        // En cours de téléchargement
+                        isUpdating -> {
+                            FilledTonalButton(
+                                onClick = { },
+                                enabled = false,
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("En cours", fontSize = 13.sp)
+                            }
                         }
-                        Text(label, fontWeight = FontWeight.Medium)
+
+                        // En file d'attente
+                        isQueued -> {
+                            FilledTonalButton(
+                                onClick = { },
+                                enabled = false,
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Schedule,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("En attente", fontSize = 13.sp)
+                            }
+                        }
+
+                        // Déjà à jour : bouton désactivé "À jour" + icône discrète pour forcer si besoin
+                        isUpToDate -> {
+                            FilledTonalButton(
+                                onClick = { },
+                                enabled = false,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.filledTonalButtonColors(
+                                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            ) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("À jour", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            }
+
+                            // Bouton discret pour réinstallation manuelle si besoin
+                            IconButton(
+                                onClick = onRequestForceReinstall,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Refresh,
+                                    contentDescription = "Forcer la réinstallation",
+                                    tint = MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        // Mise à jour disponible
+                        hasUpdate -> {
+                            Button(
+                                onClick = onInstallOrUpdate,
+                                enabled = app.downloadUrl != null,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(
+                                    Icons.Default.SystemUpdateAlt,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Mettre à jour", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        // Non installée
+                        !isInstalled -> {
+                            Button(
+                                onClick = onInstallOrUpdate,
+                                enabled = app.downloadUrl != null,
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Installer", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
+                        // Autre état (ex: pas d'APK)
+                        else -> {
+                            FilledTonalButton(
+                                onClick = { },
+                                enabled = false,
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Indisponible", fontSize = 13.sp)
+                            }
+                        }
                     }
                 }
             }
 
-            if (app.isUpdating && app.downloadProgress != null) {
-                Spacer(modifier = Modifier.height(8.dp))
+            // Barre de progression linéaire animée
+            if (isUpdating && app.downloadProgress != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                val progressPercent = ((app.downloadProgress ?: 0f) * 100).toInt()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Téléchargement de l'APK...",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        "$progressPercent %",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
                 LinearProgressIndicator(
                     progress = { app.downloadProgress ?: 0f },
-                    modifier = Modifier.fillMaxWidth().height(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp))
                 )
             }
         }

@@ -9,6 +9,7 @@ import fr.installapk.app.data.GitHubAppsRepository
 import fr.installapk.app.data.TokenValidationResult
 import fr.installapk.app.model.ProjectApp
 import fr.installapk.app.util.ApkInstaller
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,10 +25,18 @@ data class MainUiState(
     val apps: List<ProjectApp> = emptyList(),
     val isLoading: Boolean = false,
     val isUpdatingAll: Boolean = false,
+    val updateQueue: List<String> = emptyList(), // IDs des apps dans la file d'attente
+    val activeUpdateId: String? = null,          // ID de l'app en cours de téléchargement/installation
     val needsInstallPermission: Boolean = false,
     val pendingInstallFile: File? = null,
     val errorMessage: String? = null
-)
+) {
+    val pendingUpdatesCount: Int
+        get() = apps.count { it.needsInstallationOrUpdate }
+
+    val isAllUpToDate: Boolean
+        get() = apps.isNotEmpty() && pendingUpdatesCount == 0
+}
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -42,6 +51,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     )
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
+
+    private var currentDownloadJob: Job? = null
 
     init {
         validateCurrentToken()
@@ -74,11 +85,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(needsInstallPermission = !hasPermission) }
     }
 
+    fun onAppResumed() {
+        checkPermissions()
+        refreshInstalledPackageStatuses()
+        checkQueueProgressOnResume()
+    }
+
     fun refreshInstalledPackageStatuses() {
         _uiState.update { state ->
             state.copy(
                 apps = state.apps.map { repository.refreshSingleAppInstalledStatus(it) }
             )
+        }
+    }
+
+    private fun checkQueueProgressOnResume() {
+        val state = _uiState.value
+        val activeId = state.activeUpdateId ?: return
+
+        val app = state.apps.firstOrNull { it.id == activeId } ?: return
+        val freshApp = repository.refreshSingleAppInstalledStatus(app)
+
+        // Si l'application active a été installée avec succès (mise à jour prise en compte)
+        if (freshApp.isUpToDate) {
+            _uiState.update { s ->
+                s.copy(
+                    apps = s.apps.map { if (it.id == activeId) freshApp.copy(statusText = "Installé avec succès !") else it },
+                    activeUpdateId = null
+                )
+            }
+            // Enchaîner avec la suite de la file d'attente s'il y a des apps en attente
+            if (state.updateQueue.isNotEmpty()) {
+                processNextInQueue()
+            } else {
+                _uiState.update { it.copy(isUpdatingAll = false) }
+            }
         }
     }
 
@@ -107,24 +148,130 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun installOrUpdateApp(app: ProjectApp) {
-        val currentToken = _uiState.value.token
+    /**
+     * Lance ou met en file d'attente une mise à jour individuelle.
+     * Si l'app est déjà à jour et forceReinstall est false, l'opération est ignorée.
+     */
+    fun installOrUpdateApp(app: ProjectApp, forceReinstall: Boolean = false) {
         val context = getApplication<Application>()
-
         if (!ApkInstaller.canRequestPackageInstalls(context)) {
             _uiState.update { it.copy(needsInstallPermission = true) }
             return
         }
 
-        viewModelScope.launch {
-            _uiState.update { state ->
-                state.copy(
-                    apps = state.apps.map {
-                        if (it.id == app.id) it.copy(isUpdating = true, downloadProgress = 0f, statusText = "Téléchargement...") else it
-                    }
-                )
-            }
+        // Règle absolue : ne pas réinstaller une appli déjà à jour sans demande explicite
+        if (!forceReinstall && app.isUpToDate) {
+            return
+        }
 
+        val state = _uiState.value
+
+        // Si une mise à jour est déjà active
+        if (state.activeUpdateId != null) {
+            if (state.activeUpdateId != app.id && !state.updateQueue.contains(app.id)) {
+                val newQueue = state.updateQueue + app.id
+                _uiState.update { s ->
+                    s.copy(
+                        updateQueue = newQueue,
+                        apps = s.apps.map {
+                            if (it.id == app.id) it.copy(isQueued = true, statusText = "En file d'attente...") else it
+                        }
+                    )
+                }
+            }
+            return
+        }
+
+        // Aucune mise à jour active : on démarre directement celle-ci
+        _uiState.update { s ->
+            s.copy(
+                activeUpdateId = app.id,
+                apps = s.apps.map {
+                    if (it.id == app.id) it.copy(isUpdating = true, isQueued = false, downloadProgress = 0f, statusText = "Téléchargement...") else it
+                }
+            )
+        }
+
+        startDownloadAndInstall(app)
+    }
+
+    /**
+     * Met à jour toutes les applications nécessitant une mise à jour.
+     * Les applications déjà à jour sont formellement ignorées (zéro réinstallation intempestive).
+     * Les mises à jour sont traitées en file d'attente séquentielle (une par une).
+     */
+    fun updateAllApps() {
+        val context = getApplication<Application>()
+        if (!ApkInstaller.canRequestPackageInstalls(context)) {
+            _uiState.update { it.copy(needsInstallPermission = true) }
+            return
+        }
+
+        // Filtre strict : uniquement les applications non installées ou ayant une version supérieure
+        val appsToUpdate = _uiState.value.apps.filter { it.needsInstallationOrUpdate }
+        if (appsToUpdate.isEmpty()) return
+
+        // InstallAPK (auto-update) placé systématiquement en TOUT DERNIER de la file
+        val sorted = appsToUpdate.sortedBy { if (it.isSelf) 1 else 0 }
+        val queueIds = sorted.map { it.id }
+
+        val firstApp = sorted.first()
+        val remainingQueue = queueIds.drop(1)
+
+        _uiState.update { state ->
+            state.copy(
+                isUpdatingAll = true,
+                activeUpdateId = firstApp.id,
+                updateQueue = remainingQueue,
+                apps = state.apps.map { item ->
+                    when {
+                        item.id == firstApp.id -> item.copy(isUpdating = true, isQueued = false, downloadProgress = 0f, statusText = "Téléchargement...")
+                        remainingQueue.contains(item.id) -> item.copy(isQueued = true, isUpdating = false, statusText = "En file d'attente...")
+                        else -> item
+                    }
+                }
+            )
+        }
+
+        startDownloadAndInstall(firstApp)
+    }
+
+    private fun processNextInQueue() {
+        val state = _uiState.value
+        if (state.updateQueue.isEmpty()) {
+            _uiState.update { it.copy(isUpdatingAll = false, activeUpdateId = null) }
+            return
+        }
+
+        val nextId = state.updateQueue.first()
+        val remainingQueue = state.updateQueue.drop(1)
+        val nextApp = state.apps.firstOrNull { it.id == nextId }
+
+        if (nextApp == null) {
+            _uiState.update { it.copy(updateQueue = remainingQueue) }
+            processNextInQueue()
+            return
+        }
+
+        _uiState.update { s ->
+            s.copy(
+                activeUpdateId = nextId,
+                updateQueue = remainingQueue,
+                apps = s.apps.map {
+                    if (it.id == nextId) it.copy(isUpdating = true, isQueued = false, downloadProgress = 0f, statusText = "Téléchargement...") else it
+                }
+            )
+        }
+
+        startDownloadAndInstall(nextApp)
+    }
+
+    private fun startDownloadAndInstall(app: ProjectApp) {
+        val currentToken = _uiState.value.token
+        val context = getApplication<Application>()
+
+        currentDownloadJob?.cancel()
+        currentDownloadJob = viewModelScope.launch {
             val apkFile = repository.downloadAndExtractApk(app, currentToken) { progress ->
                 _uiState.update { state ->
                     state.copy(
@@ -139,7 +286,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { state ->
                     state.copy(
                         apps = state.apps.map {
-                            if (it.id == app.id) it.copy(isUpdating = false, statusText = "Prêt à installer") else it
+                            if (it.id == app.id) it.copy(isUpdating = false, downloadProgress = 1f, statusText = "Prêt à installer") else it
                         }
                     )
                 }
@@ -149,30 +296,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     state.copy(
                         apps = state.apps.map {
                             if (it.id == app.id) it.copy(isUpdating = false, statusText = "Échec du téléchargement") else it
-                        }
+                        },
+                        activeUpdateId = null
                     )
+                }
+                // Si échec sur une appli de la file d'attente, on passe à la suivante
+                if (_uiState.value.updateQueue.isNotEmpty()) {
+                    processNextInQueue()
+                } else {
+                    _uiState.update { it.copy(isUpdatingAll = false) }
                 }
             }
         }
     }
 
-    fun updateAllApps() {
-        val context = getApplication<Application>()
-        if (!ApkInstaller.canRequestPackageInstalls(context)) {
-            _uiState.update { it.copy(needsInstallPermission = true) }
-            return
+    fun cancelQueue() {
+        currentDownloadJob?.cancel()
+        _uiState.update { state ->
+            state.copy(
+                isUpdatingAll = false,
+                activeUpdateId = null,
+                updateQueue = emptyList(),
+                apps = state.apps.map {
+                    if (it.isQueued || it.isUpdating) it.copy(isQueued = false, isUpdating = false, statusText = "Prêt") else it
+                }
+            )
         }
+    }
 
-        val appsToUpdate = _uiState.value.apps.filter { it.downloadUrl != null }
-        if (appsToUpdate.isEmpty()) return
-
-        viewModelScope.launch {
-            _uiState.update { it.copy(isUpdatingAll = true) }
-            val sorted = appsToUpdate.sortedBy { if (it.isSelf) 1 else 0 }
-            for (app in sorted) {
-                installOrUpdateApp(app)
-            }
-            _uiState.update { it.copy(isUpdatingAll = false) }
-        }
+    fun continueQueueToNext() {
+        processNextInQueue()
     }
 }
