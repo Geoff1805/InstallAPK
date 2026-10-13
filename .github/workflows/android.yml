@@ -32,13 +32,17 @@ jobs:
         run: |
           if [ -f gradlew ]; then chmod +x gradlew; fi
 
-      - name: Prepare Debug Keystore
+      - name: Prepare Signing Keystore
         run: |
+          mkdir -p app
           if [ -f debug.keystore.base64 ]; then
-            mkdir -p app
             base64 -d debug.keystore.base64 > app/debug.keystore
             echo "Keystore restauré depuis debug.keystore.base64"
+          elif [ ! -f app/debug.keystore ]; then
+            echo "Génération automatique du keystore de signature..."
+            keytool -genkey -v -keystore app/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
+          ls -la app/debug.keystore
 
       - name: Build Release and Debug APKs
         run: |
