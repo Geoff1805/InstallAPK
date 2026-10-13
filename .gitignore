@@ -14,3 +14,17 @@ local.properties
 app/build/
 *.apk
 *.aab
+
+# Ajouté automatiquement par Sentinel (Sécurité & Secrets)
+.env
+.env.local
+*.keystore
+*.jks
+*.pem
+*.key
+*.p12
+build/
+.gradle/
+node_modules/
+__pycache__/
+*.pyc
