@@ -22,6 +22,14 @@ if (-not $token) {
     $token = $env:GH_TOKEN
 }
 if (-not $token) {
+    try {
+        $ghCmd = Get-Command gh -ErrorAction SilentlyContinue
+        if ($ghCmd) {
+            $token = (& $ghCmd.Source auth token).Trim()
+        }
+    } catch {}
+}
+if (-not $token) {
     $mcpConfigFile = "C:\Users\geoff\.gemini\config\mcp_config.json"
     if (Test-Path $mcpConfigFile) {
         try {
