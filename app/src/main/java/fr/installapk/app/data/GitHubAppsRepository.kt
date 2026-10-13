@@ -61,7 +61,7 @@ class GitHubAppsRepository(private val context: Context) {
             description = "Mise à jour et installation directe depuis GitHub Actions",
             iconEmoji = "📲",
             isSelf = true,
-            artifactPattern = "installapk-debug-apk"
+            artifactPattern = "installapk-release-apk"
         ),
         ProjectApp(
             id = "antigravity-controller",
