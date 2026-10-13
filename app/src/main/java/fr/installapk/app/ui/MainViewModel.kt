@@ -82,6 +82,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun addCustomRepository(repoName: String) {
+        val trimmed = repoName.trim()
+        if (trimmed.isNotBlank()) {
+            repository.addCustomRepo(trimmed)
+            refreshApps()
+        }
+    }
+
     fun refreshApps() {
         val currentToken = _uiState.value.token
         viewModelScope.launch {

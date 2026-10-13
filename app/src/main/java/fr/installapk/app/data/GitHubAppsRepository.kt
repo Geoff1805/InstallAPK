@@ -60,6 +60,16 @@ class GitHubAppsRepository(private val context: Context) {
             iconEmoji = "📲",
             isSelf = true,
             artifactPattern = "installapk-debug-apk"
+        ),
+        ProjectApp(
+            id = "antigravity-controller",
+            repoOwner = "Geoff1805",
+            repoName = "antigravity-controller",
+            packageName = "com.antigravity.antigravity_controller",
+            displayName = "Antigravity Controller",
+            description = "Contrôleur mobile et dashboard Flutter pour l'agent Antigravity",
+            iconEmoji = "🎮",
+            artifactPattern = "apk"
         )
     )
 
@@ -219,6 +229,17 @@ class GitHubAppsRepository(private val context: Context) {
         }
     }
 
+    fun addCustomRepo(repoName: String) {
+        val customSet = prefs.getStringSet("user_custom_repos", emptySet())?.toMutableSet() ?: mutableSetOf()
+        customSet.add(repoName.trim())
+        prefs.edit().putStringSet("user_custom_repos", customSet).apply()
+    }
+
+    private fun isUserCustomRepo(repoName: String): Boolean {
+        val customSet = prefs.getStringSet("user_custom_repos", emptySet()) ?: emptySet()
+        return customSet.any { it.equals(repoName.trim(), ignoreCase = true) }
+    }
+
     private suspend fun discoverAndroidProjects(token: String): List<ProjectApp> = withContext(Dispatchers.IO) {
         val projects = mutableListOf<ProjectApp>()
         try {
@@ -267,7 +288,7 @@ class GitHubAppsRepository(private val context: Context) {
                 if (topicsArray != null) {
                     for (t in 0 until topicsArray.length()) {
                         val topic = topicsArray.optString(t, "").lowercase()
-                        if (topic.contains("android") || topic.contains("apk")) {
+                        if (topic.contains("android") || topic.contains("apk") || topic.contains("flutter") || topic.contains("mobile")) {
                             hasAndroidTopic = true
                             break
                         }
@@ -275,13 +296,27 @@ class GitHubAppsRepository(private val context: Context) {
                 }
 
                 val isKnown = defaultProjects.any { it.repoName.equals(repoName, ignoreCase = true) }
+                val isDart = language.equals("Dart", ignoreCase = true)
                 val isKotlinOrJava = language.equals("Kotlin", ignoreCase = true) || language.equals("Java", ignoreCase = true)
+                val isCustom = isUserCustomRepo(repoName)
 
-                // Vérifier si le projet est Android ou s'il a un APK
-                var isAndroidProject = isKnown || hasAndroidTopic || isKotlinOrJava
+                // Vérifier si le projet est Android / Flutter ou s'il a un APK
+                var isAndroidProject = isKnown || isCustom || hasAndroidTopic || isKotlinOrJava || isDart
+                if (!isAndroidProject) {
+                    val nameDesc = "${repoName.lowercase()} ${description.lowercase()}"
+                    isAndroidProject = nameDesc.contains("android") || nameDesc.contains("apk") || nameDesc.contains("flutter")
+                }
                 if (!isAndroidProject) {
                     // Vérifier si des artefacts APK existent
                     isAndroidProject = checkHasApkArtifacts(repoOwner, repoName, token)
+                }
+                if (!isAndroidProject) {
+                    // Vérifier si des releases APK existent
+                    isAndroidProject = checkHasApkReleases(repoOwner, repoName, token)
+                }
+                if (!isAndroidProject) {
+                    // Vérifier la présence d'une structure mobile (android, app, pubspec.yaml, etc.)
+                    isAndroidProject = checkHasMobileStructure(repoOwner, repoName, token)
                 }
 
                 if (isAndroidProject) {
@@ -311,9 +346,21 @@ class GitHubAppsRepository(private val context: Context) {
         projects
     }
 
+    private fun isExcludedArtifact(name: String): Boolean {
+        val lower = name.lowercase()
+        return lower.endsWith(".json") ||
+            lower.endsWith(".txt") ||
+            lower.endsWith(".xml") ||
+            lower.endsWith(".html") ||
+            lower.contains("dependency-graph") ||
+            lower.contains("test-report") ||
+            lower.contains("unit-test") ||
+            lower.contains("lint-report")
+    }
+
     private fun checkHasApkArtifacts(owner: String, repo: String, token: String): Boolean {
         return try {
-            val url = "https://api.github.com/repos/$owner/$repo/actions/artifacts?per_page=10"
+            val url = "https://api.github.com/repos/$owner/$repo/actions/artifacts?per_page=20"
             val reqBuilder = Request.Builder()
                 .url(url)
                 .header("Accept", "application/vnd.github+json")
@@ -331,8 +378,75 @@ class GitHubAppsRepository(private val context: Context) {
             val artifacts = json.optJSONArray("artifacts") ?: return false
             for (i in 0 until artifacts.length()) {
                 val art = artifacts.getJSONObject(i)
-                val name = art.optString("name", "").lowercase()
-                if (name.contains("apk")) return true
+                val name = art.optString("name", "")
+                val size = art.optLong("size_in_bytes", 0L)
+                val isExpired = art.optBoolean("expired", false)
+                if (!isExpired && !isExcludedArtifact(name) && name.contains("apk", ignoreCase = true) && size > 200_000L) {
+                    return true
+                }
+            }
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun checkHasApkReleases(owner: String, repo: String, token: String): Boolean {
+        return try {
+            val url = "https://api.github.com/repos/$owner/$repo/releases?per_page=5"
+            val reqBuilder = Request.Builder()
+                .url(url)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "InstallAPK-Android")
+
+            if (token.isNotBlank()) {
+                val authVal = if (token.startsWith("Bearer ") || token.startsWith("token ")) token else "Bearer $token"
+                reqBuilder.header("Authorization", authVal)
+            }
+
+            val response = client.newCall(reqBuilder.build()).execute()
+            if (!response.isSuccessful) return false
+            val body = response.body?.string() ?: return false
+            val releases = JSONArray(body)
+            for (i in 0 until releases.length()) {
+                val rel = releases.getJSONObject(i)
+                val assets = rel.optJSONArray("assets") ?: continue
+                for (j in 0 until assets.length()) {
+                    val asset = assets.getJSONObject(j)
+                    val assetName = asset.optString("name", "")
+                    if (assetName.endsWith(".apk", ignoreCase = true)) return true
+                }
+            }
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun checkHasMobileStructure(owner: String, repo: String, token: String): Boolean {
+        return try {
+            val url = "https://api.github.com/repos/$owner/$repo/contents"
+            val reqBuilder = Request.Builder()
+                .url(url)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "InstallAPK-Android")
+
+            if (token.isNotBlank()) {
+                val authVal = if (token.startsWith("Bearer ") || token.startsWith("token ")) token else "Bearer $token"
+                reqBuilder.header("Authorization", authVal)
+            }
+
+            val response = client.newCall(reqBuilder.build()).execute()
+            if (!response.isSuccessful) return false
+            val body = response.body?.string() ?: return false
+            val contents = JSONArray(body)
+            for (i in 0 until contents.length()) {
+                val item = contents.getJSONObject(i)
+                val name = item.optString("name", "").lowercase()
+                if (name == "android" || name == "app" || name == "pubspec.yaml" ||
+                    name == "build.gradle.kts" || name == "build.gradle" || name == "settings.gradle.kts") {
+                    return true
+                }
             }
             false
         } catch (_: Exception) {
@@ -366,7 +480,21 @@ class GitHubAppsRepository(private val context: Context) {
             return extractedFromGroovy
         }
 
-        // 5. Fallback conventionnel
+        // 5. Tenter de lire android/app/build.gradle (Flutter / React Native)
+        val extractedFromFlutterGroovy = fetchAndParsePackageFromBuildGradle(owner, repo, "android/app/build.gradle", token)
+        if (!extractedFromFlutterGroovy.isNullOrBlank()) {
+            prefs.edit().putString("pkg_$repo", extractedFromFlutterGroovy).apply()
+            return extractedFromFlutterGroovy
+        }
+
+        // 6. Tenter de lire android/app/build.gradle.kts (Flutter KTS)
+        val extractedFromFlutterKts = fetchAndParsePackageFromBuildGradle(owner, repo, "android/app/build.gradle.kts", token)
+        if (!extractedFromFlutterKts.isNullOrBlank()) {
+            prefs.edit().putString("pkg_$repo", extractedFromFlutterKts).apply()
+            return extractedFromFlutterKts
+        }
+
+        // 7. Fallback conventionnel
         val sanitized = repo.lowercase().replace("-", "").replace("_", "")
         val fallback = "fr.$sanitized.app"
         return fallback
@@ -475,19 +603,36 @@ class GitHubAppsRepository(private val context: Context) {
             val artifacts = json.optJSONArray("artifacts") ?: JSONArray()
 
             var matchedArtifact: JSONObject? = null
-            for (i in 0 until artifacts.length()) {
-                val art = artifacts.getJSONObject(i)
-                val name = art.optString("name", "")
-                val isExpired = art.optBoolean("expired", false)
-                if (isExpired) continue
 
-                val isApkMatch = name.contains("apk", ignoreCase = true) ||
-                    name.contains(app.artifactPattern, ignoreCase = true) ||
-                    name.contains(app.repoName, ignoreCase = true)
+            // Priorité 1 : artefact correspondant au motif spécifique (ex: Needix-Debug-APK, installapk-debug-apk)
+            if (app.artifactPattern.isNotBlank() && !app.artifactPattern.equals("apk", ignoreCase = true)) {
+                for (i in 0 until artifacts.length()) {
+                    val art = artifacts.getJSONObject(i)
+                    val name = art.optString("name", "")
+                    val isExpired = art.optBoolean("expired", false)
+                    val size = art.optLong("size_in_bytes", 0L)
+                    if (isExpired || isExcludedArtifact(name) || size < 200_000L) continue
 
-                if (isApkMatch) {
-                    matchedArtifact = art
-                    break
+                    if (name.contains(app.artifactPattern, ignoreCase = true)) {
+                        matchedArtifact = art
+                        break
+                    }
+                }
+            }
+
+            // Priorité 2 : artefact contenant "apk" et taille > 200 Ko, non exclu
+            if (matchedArtifact == null) {
+                for (i in 0 until artifacts.length()) {
+                    val art = artifacts.getJSONObject(i)
+                    val name = art.optString("name", "")
+                    val isExpired = art.optBoolean("expired", false)
+                    val size = art.optLong("size_in_bytes", 0L)
+                    if (isExpired || isExcludedArtifact(name) || size < 200_000L) continue
+
+                    if (name.contains("apk", ignoreCase = true)) {
+                        matchedArtifact = art
+                        break
+                    }
                 }
             }
 
@@ -635,9 +780,16 @@ class GitHubAppsRepository(private val context: Context) {
             }
 
             val response = client.newCall(reqBuilder.build()).execute()
-            if (!response.isSuccessful) return@withContext null
+            if (!response.isSuccessful) {
+                Log.e(tag, "Échec téléchargement pour ${app.id}: HTTP ${response.code} ${response.message}")
+                return@withContext null
+            }
 
-            val responseBody = response.body ?: return@withContext null
+            val responseBody = response.body
+            if (responseBody == null) {
+                Log.e(tag, "Corps de réponse vide pour ${app.id}")
+                return@withContext null
+            }
             val contentLength = responseBody.contentLength()
             val inputStream = responseBody.byteStream()
 
@@ -659,6 +811,10 @@ class GitHubAppsRepository(private val context: Context) {
             fos.flush()
             fos.close()
             inputStream.close()
+
+            if (tempDownloadFile.length() < 100_000L) {
+                Log.w(tag, "Fichier téléchargé suspect car trop petit (${tempDownloadFile.length()} octets) pour ${app.id}")
+            }
 
             val updatesDir = File(context.filesDir, "updates")
             if (!updatesDir.exists()) updatesDir.mkdirs()
@@ -685,6 +841,7 @@ class GitHubAppsRepository(private val context: Context) {
                         apkFos.flush()
                         apkFos.close()
                         foundApk = true
+                        Log.i(tag, "APK extrait du zip avec succès: ${zipEntry.name} (${destinationApk.length()} octets)")
                         break
                     }
                     zipEntry = zis.nextEntry
@@ -693,6 +850,7 @@ class GitHubAppsRepository(private val context: Context) {
                 tempDownloadFile.delete()
 
                 if (!foundApk || !destinationApk.exists() || destinationApk.length() == 0L) {
+                    Log.e(tag, "Aucun fichier .apk trouvé dans l'archive zip téléchargée pour ${app.id}")
                     return@withContext null
                 }
             } else {

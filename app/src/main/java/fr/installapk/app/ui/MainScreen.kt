@@ -29,7 +29,10 @@ fun MainScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showTokenDialog by remember { mutableStateOf(false) }
+    var showAddRepoDialog by remember { mutableStateOf(false) }
+    var showPlayProtectInfo by remember { mutableStateOf(false) }
     var tempToken by remember { mutableStateOf(uiState.token) }
+    var newRepoName by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         viewModel.checkPermissions()
@@ -59,6 +62,12 @@ fun MainScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { showAddRepoDialog = true },
+                        enabled = !uiState.isLoading
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Ajouter un dépôt")
+                    }
                     IconButton(
                         onClick = { viewModel.refreshApps() },
                         enabled = !uiState.isLoading
@@ -307,6 +316,55 @@ fun MainScreen(
                 }
             }
 
+            // Guide Play Protect / Avertissement Android
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (showPlayProtectInfo) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                Icons.Default.Security,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Avertissement Android « Application dangereuse » ?",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { showPlayProtectInfo = !showPlayProtectInfo }) {
+                                Text(if (showPlayProtectInfo) "Masquer" else "Explications")
+                            }
+                        }
+                        if (showPlayProtectInfo) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "ℹ️ Cet avertissement de Google Play Protect est tout à fait normal : vos applications sont compilées de manière privée par vos propres GitHub Actions et ne sont pas distribuées sur le Google Play Store public.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "👉 Pour continuer l'installation : appuyez sur « Plus de détails » puis sur « Installer quand même ».",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+
             items(uiState.apps, key = { it.id }) { app ->
                 AppCard(
                     app = app,
@@ -318,6 +376,55 @@ fun MainScreen(
                 Spacer(modifier = Modifier.height(32.dp))
             }
         }
+    }
+
+    if (showAddRepoDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showAddRepoDialog = false
+                newRepoName = ""
+            },
+            title = { Text("Ajouter un dépôt GitHub") },
+            text = {
+                Column {
+                    Text(
+                        "Saisissez le nom d'un dépôt GitHub de votre compte (ex: Needix, Bullix, ou tout autre projet) pour le suivre :",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = newRepoName,
+                        onValueChange = { newRepoName = it },
+                        label = { Text("Nom du dépôt (ex: MonApp)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = newRepoName.trim()
+                        if (name.isNotBlank()) {
+                            viewModel.addCustomRepository(name)
+                        }
+                        showAddRepoDialog = false
+                        newRepoName = ""
+                    },
+                    enabled = newRepoName.isNotBlank()
+                ) {
+                    Text("Ajouter et Synchroniser")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showAddRepoDialog = false
+                    newRepoName = ""
+                }) {
+                    Text("Annuler")
+                }
+            }
+        )
     }
 
     if (showTokenDialog) {
