@@ -68,10 +68,10 @@ class GitHubAppsRepository(private val context: Context) {
             repoOwner = "Geoff1805",
             repoName = "antigravity-controller",
             packageName = "com.antigravity.antigravity_controller",
-            displayName = "Antigravity Mobile",
+            displayName = "Antigravity Controller",
             description = "Contrôleur mobile et dashboard Flutter pour l'agent Antigravity",
             iconEmoji = "🎮",
-            artifactPattern = "AntigravityMobile.apk"
+            artifactPattern = "AntigravityController.apk"
         )
     )
 
@@ -685,8 +685,10 @@ class GitHubAppsRepository(private val context: Context) {
                 // 2. Motif d'artefact défini (ex: Needix-Release-APK, bullix-debug-apk)
                 // 3. Tout artefact contenant le nom de l'app ou du repo et le mot "apk"
                 val normalizedName = name.lowercase().replace("-", "").replace("_", "").replace(".apk", "")
+                val repoPrefix = app.repoName.split("-", "_").firstOrNull { it.length >= 4 }?.lowercase() ?: ""
                 val matchesApp = normalizedName.contains(appIdNorm) ||
                     normalizedName.contains(repoNorm) ||
+                    (repoPrefix.isNotBlank() && normalizedName.contains(repoPrefix)) ||
                     (patNorm.isNotBlank() && normalizedName.contains(patNorm))
                 val hasApk = name.contains("apk", ignoreCase = true)
 
@@ -944,27 +946,41 @@ class GitHubAppsRepository(private val context: Context) {
             for (i in 0 until releases.length()) {
                 val rel = releases.getJSONObject(i)
                 val assets = rel.optJSONArray("assets") ?: continue
+                var bestAsset: JSONObject? = null
+                val targetName = "${app.id}.apk"
                 for (j in 0 until assets.length()) {
                     val asset = assets.getJSONObject(j)
                     val assetName = asset.optString("name", "")
                     if (assetName.endsWith(".apk", ignoreCase = true)) {
-                        val downloadUrl = asset.getString("browser_download_url")
-                        val tagName = rel.optString("tag_name", "Release")
-                        val size = asset.optLong("size", 0L)
-                        val date = rel.optString("published_at", "")
-                        val relTimestamp = parseIsoDateToMillis(date)
-                        return app.copy(
-                            installedVersionCode = installedCode,
-                            installedVersionName = installedName,
-                            installedUpdateTime = installedTime,
-                            latestArtifactSize = size,
-                            latestArtifactDate = date,
-                            artifactTimestamp = relTimestamp,
-                            downloadUrl = downloadUrl,
-                            latestVersionName = tagName,
-                            statusText = "Release disponible"
-                        )
+                        if (bestAsset == null) {
+                            bestAsset = asset
+                        } else {
+                            if (assetName.equals(targetName, ignoreCase = true) ||
+                                (app.artifactPattern.isNotBlank() && assetName.equals(app.artifactPattern, ignoreCase = true))) {
+                                bestAsset = asset
+                            }
+                        }
                     }
+                }
+
+                if (bestAsset != null) {
+                    val assetUrl = bestAsset.optString("url", "").takeIf { it.isNotBlank() }
+                        ?: bestAsset.getString("browser_download_url")
+                    val tagName = rel.optString("tag_name", "Release")
+                    val size = bestAsset.optLong("size", 0L)
+                    val date = rel.optString("published_at", "")
+                    val relTimestamp = parseIsoDateToMillis(date)
+                    return app.copy(
+                        installedVersionCode = installedCode,
+                        installedVersionName = installedName,
+                        installedUpdateTime = installedTime,
+                        latestArtifactSize = size,
+                        latestArtifactDate = date,
+                        artifactTimestamp = relTimestamp,
+                        downloadUrl = assetUrl,
+                        latestVersionName = tagName,
+                        statusText = "Release disponible"
+                    )
                 }
             }
             null
@@ -1004,9 +1020,10 @@ class GitHubAppsRepository(private val context: Context) {
     ): File? = withContext(Dispatchers.IO) {
         val downloadUrl = app.downloadUrl ?: return@withContext null
         try {
+            val isReleaseAssetApi = downloadUrl.contains("/releases/assets/")
             val reqBuilder = Request.Builder()
                 .url(downloadUrl)
-                .header("Accept", "application/vnd.github+json")
+                .header("Accept", if (isReleaseAssetApi) "application/octet-stream" else "application/vnd.github+json")
                 .header("User-Agent", "InstallAPK-Android")
 
             if (token.isNotBlank()) {
