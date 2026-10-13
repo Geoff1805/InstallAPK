@@ -172,7 +172,8 @@ class GitHubAppsRepository(private val context: Context) {
             // 2. Recherche par label de l'application
             for (pkg in packages) {
                 try {
-                    val appLabel = pm.getApplicationLabel(pkg.applicationInfo).toString().lowercase()
+                    val appInfo = pkg.applicationInfo ?: continue
+                    val appLabel = pm.getApplicationLabel(appInfo).toString().lowercase()
                     if (appLabel.equals(app.displayName.lowercase(), ignoreCase = true) ||
                         appLabel.contains(app.displayName.lowercase())
                     ) {
@@ -858,6 +859,8 @@ class GitHubAppsRepository(private val context: Context) {
                     }
                 }
             }
+        } catch (_: Exception) {}
+
         // 3. Tenter app/build.gradle.kts ou app/build.gradle
         for (gradlePath in listOf("app/build.gradle.kts", "app/build.gradle")) {
             try {
