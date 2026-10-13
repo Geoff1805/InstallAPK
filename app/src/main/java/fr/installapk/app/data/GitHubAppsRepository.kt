@@ -40,7 +40,7 @@ class GitHubAppsRepository(private val context: Context) {
             displayName = "Bullix",
             description = "Assistant personnel offline-first pour collectionneurs de BD & scans",
             iconEmoji = "📚",
-            artifactPattern = "bullix-debug-apk"
+            artifactPattern = "Bullix.apk"
         ),
         ProjectApp(
             id = "Needix",
@@ -50,7 +50,7 @@ class GitHubAppsRepository(private val context: Context) {
             displayName = "Needix",
             description = "Gestionnaire intelligent d'inventaire et courses du foyer",
             iconEmoji = "📦",
-            artifactPattern = "Needix-Debug-APK"
+            artifactPattern = "Needix.apk"
         ),
         ProjectApp(
             id = "InstallAPK",
@@ -61,7 +61,7 @@ class GitHubAppsRepository(private val context: Context) {
             description = "Mise à jour et installation directe depuis GitHub Actions",
             iconEmoji = "📲",
             isSelf = true,
-            artifactPattern = "installapk-release-apk"
+            artifactPattern = "InstallAPK.apk"
         ),
         ProjectApp(
             id = "antigravity-controller",
@@ -71,7 +71,7 @@ class GitHubAppsRepository(private val context: Context) {
             displayName = "Antigravity Mobile",
             description = "Contrôleur mobile et dashboard Flutter pour l'agent Antigravity",
             iconEmoji = "🎮",
-            artifactPattern = "apk"
+            artifactPattern = "AntigravityMobile.apk"
         )
     )
 
@@ -669,6 +669,10 @@ class GitHubAppsRepository(private val context: Context) {
             val artifacts = json.optJSONArray("artifacts") ?: JSONArray()
 
             val candidateArtifacts = mutableListOf<JSONObject>()
+            val appIdNorm = app.id.lowercase().replace("-", "").replace("_", "")
+            val repoNorm = app.repoName.lowercase().replace("-", "").replace("_", "")
+            val patNorm = app.artifactPattern.lowercase().replace("-", "").replace("_", "").replace(".apk", "")
+
             for (i in 0 until artifacts.length()) {
                 val art = artifacts.getJSONObject(i)
                 val name = art.optString("name", "")
@@ -676,17 +680,26 @@ class GitHubAppsRepository(private val context: Context) {
                 val size = art.optLong("size_in_bytes", 0L)
                 if (isExpired || isExcludedArtifact(name) || size < 200_000L) continue
 
-                val hasPattern = app.artifactPattern.isNotBlank() && name.contains(app.artifactPattern, ignoreCase = true)
+                // Détection robuste :
+                // 1. Motif normalisé exact (ex: InstallAPK.apk, Bullix.apk, Needix.apk)
+                // 2. Motif d'artefact défini (ex: Needix-Release-APK, bullix-debug-apk)
+                // 3. Tout artefact contenant le nom de l'app ou du repo et le mot "apk"
+                val normalizedName = name.lowercase().replace("-", "").replace("_", "").replace(".apk", "")
+                val matchesApp = normalizedName.contains(appIdNorm) ||
+                    normalizedName.contains(repoNorm) ||
+                    (patNorm.isNotBlank() && normalizedName.contains(patNorm))
                 val hasApk = name.contains("apk", ignoreCase = true)
-                if (hasPattern || hasApk) {
+
+                if (matchesApp && hasApk) {
                     candidateArtifacts.add(art)
                 }
             }
 
             // Tri intelligent :
-            // 1. Branche 'main' ou 'master' en priorité
-            // 2. Artefact Release en priorité
-            // 3. Date de création la plus récente
+            // 1. Branche 'main' ou 'master' en priorité absolue
+            // 2. CRITÈRE MAJEUR : Date de création la plus récente (created_at) ! Le dernier build publié l'emporte toujours.
+            // 3. En cas de même build / même date : priorité à la correspondance du nom exact (ex: App.apk)
+            // 4. Préférence au build Release par rapport au build Debug
             var matchedArtifact: JSONObject? = candidateArtifacts
                 .sortedWith(
                     compareByDescending<JSONObject> {
@@ -694,15 +707,17 @@ class GitHubAppsRepository(private val context: Context) {
                         branch.equals("main", ignoreCase = true) || branch.equals("master", ignoreCase = true)
                     }
                     .thenByDescending {
+                        it.optString("created_at", "")
+                    }
+                    .thenByDescending {
+                        val name = it.optString("name", "")
+                        val exactName = "${app.id}.apk"
+                        name.equals(exactName, ignoreCase = true) ||
+                            (app.artifactPattern.isNotBlank() && name.equals(app.artifactPattern, ignoreCase = true))
+                    }
+                    .thenByDescending {
                         val name = it.optString("name", "")
                         name.contains("release", ignoreCase = true)
-                    }
-                    .thenByDescending {
-                        val name = it.optString("name", "")
-                        app.artifactPattern.isNotBlank() && name.contains(app.artifactPattern, ignoreCase = true)
-                    }
-                    .thenByDescending {
-                        it.optString("created_at", "")
                     }
                 )
                 .firstOrNull()

@@ -65,3 +65,15 @@
      - Pour la mise à jour du Gradle Wrapper : **ne pas utiliser d'actions Node tierces non maintenues** (comme `gradle-update/update-gradle-wrapper-action@v2`). Utiliser systématiquement un step natif autonome (`./gradlew wrapper` avec interrogation de l'API Gradle `https://services.gradle.org/versions/current` et `gh pr create` via la CLI GitHub native du runner).
   3. **Stabilité des images Runners** :
      - Éviter les notices informatives de transition de labels (ex. avertissement de migration de `ubuntu-latest` vers Ubuntu 26) en privilégiant des runners LTS explicitement versionnés (ex. `ubuntu-24.04`) ou s'assurer de leur conformité anticipée.
+
+## Normalisation des Noms d'APK et Zéro ZIP Superflu (/learn)
+- **Règle absolue (/learn)** : Pour tous les projets Android actuels et futurs (`InstallAPK`, `Bullix`, `Needix`, etc.), le nom de l'APK compilé doit être strictement normalisé et directement installable :
+  1. **Nommage normalisé simple `<AppName>.apk`** :
+     - Tout artefact ou fichier APK produit par la CI/CD et distribué doit porter exclusivement le nom clair de l'application : **`<AppName>.apk`** (ex: `InstallAPK.apk`, `Bullix.apk`, `Needix.apk`).
+     - Proscrire les noms à rallonge hétérogènes ou suffixes confus (`-release-apk`, `-debug-apk`, `app-release.apk`, `Needix-Debug-APK`).
+  2. **Zéro ZIP superflu (APK brut directement téléchargeable)** :
+     - Les APKs doivent être mis à disposition directement sous leur format `.apk` natif sans compression ou encapsulation zip superflue (notamment via les GitHub Releases où le fichier `.apk` est immédiatement cliquable et installable par l'utilisateur).
+     - Dans les workflows CI/CD, copier ou renommer systématiquement l'APK compilé vers `<AppName>.apk` avant publication d'artefact ou de release.
+  3. **Détection robuste et priorité absolue à la fraîcheur dans InstallAPK** :
+     - L'application `InstallAPK` doit trier les artefacts GitHub prioritairement par **date de création (`created_at`) décroissante** afin de toujours sélectionner le build le plus récent (et non pas privilégier arbitrairement un vieux mot-clé "release" sur un build debug tout frais).
+     - Le filtre de détection doit reconnaître universellement les motifs `<AppName>.apk`, `<AppName>` ou tout artefact contenant le nom de l'application et l'extension `.apk`.

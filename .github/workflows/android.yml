@@ -48,16 +48,52 @@ jobs:
         run: |
           ./gradlew assembleRelease assembleDebug
 
-      - name: Upload Release APK
+      - name: Prepare Normalized APK
+        run: |
+          mkdir -p build-artifacts
+          RELEASE_APK=$(find app/build/outputs/apk/release/ -name "*.apk" | head -n 1)
+          if [ -n "$RELEASE_APK" ]; then
+            cp "$RELEASE_APK" build-artifacts/InstallAPK.apk
+            echo "Copied Release APK to build-artifacts/InstallAPK.apk"
+          else
+            DEBUG_APK=$(find app/build/outputs/apk/debug/ -name "*.apk" | head -n 1)
+            cp "$DEBUG_APK" build-artifacts/InstallAPK.apk
+            echo "Copied Debug APK to build-artifacts/InstallAPK.apk"
+          fi
+          ls -lh build-artifacts/
+
+      - name: Upload Normalized APK Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: InstallAPK.apk
+          path: build-artifacts/InstallAPK.apk
+          retention-days: 30
+
+      - name: Upload Release APK (Compatibility)
         uses: actions/upload-artifact@v7
         with:
           name: installapk-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: build-artifacts/InstallAPK.apk
           retention-days: 30
 
-      - name: Upload Debug APK
+      - name: Upload Debug APK (Compatibility)
         uses: actions/upload-artifact@v7
         with:
           name: installapk-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
+
+      - name: Publish Direct Unzipped APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(grep 'versionName' version.properties | cut -d'=' -f2 | tr -d ' \r\n')
+          TAG="v${VERSION}"
+          echo "Publishing direct InstallAPK.apk for tag $TAG..."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" build-artifacts/InstallAPK.apk --clobber
+          else
+            gh release create "$TAG" build-artifacts/InstallAPK.apk \
+              --title "InstallAPK v${VERSION}" \
+              --notes "Version ${VERSION} compilée automatiquement par GitHub Actions. Fichier APK direct sans archive zip."
+          fi
