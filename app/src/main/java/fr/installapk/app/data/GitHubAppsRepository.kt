@@ -66,7 +66,7 @@ class GitHubAppsRepository(private val context: Context) {
             repoOwner = "Geoff1805",
             repoName = "antigravity-controller",
             packageName = "com.antigravity.antigravity_controller",
-            displayName = "Antigravity Controller",
+            displayName = "Antigravity Mobile",
             description = "Contrôleur mobile et dashboard Flutter pour l'agent Antigravity",
             iconEmoji = "🎮",
             artifactPattern = "apk"

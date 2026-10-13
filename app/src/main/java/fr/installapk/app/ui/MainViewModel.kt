@@ -31,6 +31,18 @@ data class MainUiState(
     val pendingInstallFile: File? = null,
     val errorMessage: String? = null
 ) {
+    val selfApp: ProjectApp?
+        get() = apps.firstOrNull { it.isSelf }
+
+    val managedApps: List<ProjectApp>
+        get() = apps.filter { !it.isSelf }
+
+    val pendingManagedUpdatesCount: Int
+        get() = managedApps.count { it.needsInstallationOrUpdate }
+
+    val isAllManagedUpToDate: Boolean
+        get() = managedApps.isNotEmpty() && pendingManagedUpdatesCount == 0
+
     val pendingUpdatesCount: Int
         get() = apps.count { it.needsInstallationOrUpdate }
 
@@ -207,15 +219,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // Filtre strict : uniquement les applications non installées ou ayant une version supérieure
-        val appsToUpdate = _uiState.value.apps.filter { it.needsInstallationOrUpdate }
+        // Filtre strict : uniquement les applications clientes gérées (excluant InstallAPK qui a son propre cycle)
+        val appsToUpdate = _uiState.value.managedApps.filter { it.needsInstallationOrUpdate }
         if (appsToUpdate.isEmpty()) return
 
-        // InstallAPK (auto-update) placé systématiquement en TOUT DERNIER de la file
-        val sorted = appsToUpdate.sortedBy { if (it.isSelf) 1 else 0 }
-        val queueIds = sorted.map { it.id }
-
-        val firstApp = sorted.first()
+        val queueIds = appsToUpdate.map { it.id }
+        val firstApp = appsToUpdate.first()
         val remainingQueue = queueIds.drop(1)
 
         _uiState.update { state ->
@@ -234,6 +243,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         startDownloadAndInstall(firstApp)
+    }
+
+    /**
+     * Auto-mise à jour spécifique pour InstallAPK.
+     * Traitée de manière totalement indépendante des applications clientes.
+     */
+    fun updateSelfApp() {
+        val self = _uiState.value.selfApp ?: return
+        installOrUpdateApp(self, forceReinstall = false)
     }
 
     private fun processNextInQueue() {

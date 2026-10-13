@@ -1,7 +1,10 @@
 package fr.installapk.app.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -14,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,8 +36,10 @@ fun MainScreen(
     var showAddRepoDialog by remember { mutableStateOf(false) }
     var showPlayProtectInfo by remember { mutableStateOf(false) }
     var appToForceReinstall by remember { mutableStateOf<ProjectApp?>(null) }
+    var appToShowBuildInfo by remember { mutableStateOf<ProjectApp?>(null) }
     var tempToken by remember { mutableStateOf(uiState.token) }
     var newRepoName by remember { mutableStateOf("") }
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
         viewModel.checkPermissions()
@@ -159,8 +165,8 @@ fun MainScreen(
                         }
                     }
 
-                    val pendingCount = uiState.pendingUpdatesCount
-                    val isAllUpToDate = uiState.isAllUpToDate
+                    val pendingCount = uiState.pendingManagedUpdatesCount
+                    val isAllUpToDate = uiState.isAllManagedUpToDate
                     val isUpdatingAll = uiState.isUpdatingAll
 
                     when {
@@ -190,7 +196,7 @@ fun MainScreen(
                                     Spacer(modifier = Modifier.width(12.dp))
                                     val inQueue = uiState.updateQueue.size
                                     Text(
-                                        text = if (inQueue > 0) "Mise à jour séquentielle ($inQueue en attente)..." else "Finalisation de la mise à jour...",
+                                        text = if (inQueue > 0) "Mise à jour séquentielle ($inQueue en attente)..." else "Finalisation...",
                                         fontWeight = FontWeight.SemiBold
                                     )
                                 }
@@ -213,7 +219,7 @@ fun MainScreen(
                             }
                         }
 
-                        // Cas 2 : Toutes les applications sont à jour (zéro réinstallation)
+                        // Cas 2 : Toutes les applications gérées sont déjà à jour
                         isAllUpToDate -> {
                             OutlinedButton(
                                 onClick = { },
@@ -234,7 +240,7 @@ fun MainScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    "Toutes les applications sont à jour (${uiState.apps.size})",
+                                    "Toutes vos applications sont à jour (${uiState.managedApps.size})",
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 15.sp,
                                     color = MaterialTheme.colorScheme.onSurface
@@ -242,7 +248,7 @@ fun MainScreen(
                             }
                         }
 
-                        // Cas 3 : Mises à jour ou installations en attente
+                        // Cas 3 : Mises à jour ou installations en attente pour les applications gérées
                         pendingCount > 0 -> {
                             Button(
                                 onClick = { viewModel.updateAllApps() },
@@ -265,7 +271,7 @@ fun MainScreen(
                             }
                         }
 
-                        // Cas 4 : Aucune application ou état initial
+                        // Cas 4 : Aucune application gérée
                         else -> {
                             Button(
                                 onClick = { },
@@ -288,7 +294,7 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             // Bandeau d'alerte Token expiré / invalide
             val validation = uiState.tokenValidation
@@ -419,6 +425,18 @@ fun MainScreen(
                 }
             }
 
+            // SECTION 1 : CARTE DÉDIÉE INSTALLAPK (Auto-mise à jour traitée différemment)
+            val selfApp = uiState.selfApp
+            if (selfApp != null) {
+                item {
+                    SelfAppCard(
+                        app = selfApp,
+                        onUpdate = { viewModel.updateSelfApp() },
+                        onRequestForceReinstall = { appToForceReinstall = selfApp }
+                    )
+                }
+            }
+
             // Guide Play Protect / Avertissement Android
             item {
                 Card(
@@ -468,11 +486,35 @@ fun MainScreen(
                 }
             }
 
-            items(uiState.apps, key = { it.id }) { app ->
+            // SECTION 2 : VOS APPLICATIONS GÉRÉES (Bullix, Needix, Antigravity Mobile...)
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Applications gérées (${uiState.managedApps.size})",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        "GitHub Actions",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+
+            items(uiState.managedApps, key = { it.id }) { app ->
                 AppCard(
                     app = app,
                     onInstallOrUpdate = { viewModel.installOrUpdateApp(app) },
-                    onRequestForceReinstall = { appToForceReinstall = app }
+                    onRequestForceReinstall = { appToForceReinstall = app },
+                    onOpenBuildStatus = { appToShowBuildInfo = app }
                 )
             }
 
@@ -480,6 +522,52 @@ fun MainScreen(
                 Spacer(modifier = Modifier.height(32.dp))
             }
         }
+    }
+
+    // Dialogue d'information sur le build CI en attente (ex: Antigravity Mobile)
+    if (appToShowBuildInfo != null) {
+        val target = appToShowBuildInfo!!
+        AlertDialog(
+            onDismissRequest = { appToShowBuildInfo = null },
+            icon = {
+                Icon(
+                    Icons.Default.CloudQueue,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = { Text("Build CI de ${target.displayName}") },
+            text = {
+                Column {
+                    Text(
+                        "Aucun artefact APK n'est encore disponible sur GitHub Actions pour le dépôt ${target.repoName}.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        "Dès que le workflow GitHub Actions aura compilé le projet avec succès, l'APK apparaîtra automatiquement ici prêt à être installé en un clic.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/${target.repoOwner}/${target.repoName}/actions"))
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                    appToShowBuildInfo = null
+                }) {
+                    Text("Voir sur GitHub Actions")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { appToShowBuildInfo = null }) {
+                    Text("Fermer")
+                }
+            }
+        )
     }
 
     // Dialogue de confirmation de réinstallation forcée
@@ -606,17 +694,172 @@ fun MainScreen(
     }
 }
 
+/**
+ * Carte dédiée pour InstallAPK (l'application gestionnaire elle-même).
+ * Traitée avec un statut propre, séparée des applications clientes.
+ */
+@Composable
+fun SelfAppCard(
+    app: ProjectApp,
+    onUpdate: () -> Unit,
+    onRequestForceReinstall: () -> Unit
+) {
+    val isUpToDate = app.isUpToDate
+    val hasUpdate = app.hasUpdateAvailable
+    val isUpdating = app.isUpdating
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                width = 1.dp,
+                color = if (hasUpdate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                shape = RoundedCornerShape(16.dp)
+            ),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (hasUpdate) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    modifier = Modifier.size(46.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(app.iconEmoji, fontSize = 22.sp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "InstallAPK (Cette application)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primary
+                        ) {
+                            Text(
+                                "GESTIONNAIRE",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = if (isUpToDate) "Version actuelle : v${app.installedVersionName} (À jour)" else "Mise à jour disponible : v${app.installedVersionName} ➔ v${app.latestVersionName}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                when {
+                    isUpdating -> {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    }
+                    hasUpdate -> {
+                        Button(
+                            onClick = onUpdate,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Icon(Icons.Default.SystemUpdateAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Mettre à jour", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    isUpToDate -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("À jour", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                            IconButton(
+                                onClick = onRequestForceReinstall,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Refresh,
+                                    contentDescription = "Réinstaller",
+                                    tint = MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                    else -> {
+                        Text("Prêt", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+
+            if (isUpdating && app.downloadProgress != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                val progressPercent = ((app.downloadProgress ?: 0f) * 100).toInt()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Téléchargement de l'auto-mise à jour...", style = MaterialTheme.typography.labelSmall)
+                    Text("$progressPercent %", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                LinearProgressIndicator(
+                    progress = { app.downloadProgress ?: 0f },
+                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp))
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Carte individuelle pour chaque application gérée (Bullix, Needix, Antigravity Mobile...).
+ */
 @Composable
 fun AppCard(
     app: ProjectApp,
     onInstallOrUpdate: () -> Unit,
-    onRequestForceReinstall: () -> Unit
+    onRequestForceReinstall: () -> Unit,
+    onOpenBuildStatus: () -> Unit
 ) {
     val isInstalled = app.isInstalled
     val isUpToDate = app.isUpToDate
     val hasUpdate = app.hasUpdateAvailable
     val isQueued = app.isQueued
     val isUpdating = app.isUpdating
+    val hasNoApkYet = app.downloadUrl == null
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -627,7 +870,7 @@ fun AppCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Ligne Titre + Emoji + Badge Auto-Update
+            // Ligne Titre + Emoji
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
@@ -645,28 +888,11 @@ fun AppCard(
                 Spacer(modifier = Modifier.width(12.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = app.displayName,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp
-                        )
-                        if (app.isSelf) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.tertiaryContainer
-                            ) {
-                                Text(
-                                    "AUTO-UPDATE",
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                    }
+                    Text(
+                        text = app.displayName,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp
+                    )
                     Text(
                         text = app.description,
                         style = MaterialTheme.typography.bodySmall,
@@ -709,6 +935,20 @@ fun AppCard(
                             )
                         }
                     }
+                    hasNoApkYet -> {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
+                        ) {
+                            Text(
+                                "⏳ En attente du premier build CI",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                     isUpToDate -> {
                         Surface(
                             shape = RoundedCornerShape(6.dp),
@@ -737,7 +977,7 @@ fun AppCard(
                             )
                         }
                     }
-                    !isInstalled && app.downloadUrl != null -> {
+                    !isInstalled -> {
                         Surface(
                             shape = RoundedCornerShape(6.dp),
                             color = MaterialTheme.colorScheme.tertiaryContainer
@@ -747,20 +987,6 @@ fun AppCard(
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-                    else -> {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                        ) {
-                            Text(
-                                "En attente du build CI",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Normal,
-                                color = MaterialTheme.colorScheme.outline,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
@@ -802,7 +1028,7 @@ fun AppCard(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Boutons d'action contextuels
+                // Boutons d'action contextuels et cohérents
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     when {
                         // En cours de téléchargement
@@ -835,6 +1061,25 @@ fun AppCard(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("En attente", fontSize = 13.sp)
+                            }
+                        }
+
+                        // Aucun APK encore compilé (ex: Antigravity Mobile en attente de CI)
+                        hasNoApkYet -> {
+                            OutlinedButton(
+                                onClick = onOpenBuildStatus,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.secondary
+                                )
+                            ) {
+                                Icon(
+                                    Icons.Default.CloudQueue,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Statut CI", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                             }
                         }
 
@@ -910,7 +1155,7 @@ fun AppCard(
                             }
                         }
 
-                        // Autre état (ex: pas d'APK)
+                        // Autre état de repli
                         else -> {
                             FilledTonalButton(
                                 onClick = { },
