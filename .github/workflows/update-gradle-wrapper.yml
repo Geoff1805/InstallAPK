@@ -2,13 +2,17 @@ name: Update Gradle Wrapper (Stable)
 
 on:
   schedule:
-    # Vérification hebdomadaire chaque lundi à 05:00 UTC
-    - cron: '0 5 * * 1'
+    # Green IT : verification mensuelle (le 1er du mois a 05:00 UTC)
+    - cron: '0 5 1 * *'
   workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
+
+concurrency:
+  group: update-gradle-wrapper
+  cancel-in-progress: true
 
 jobs:
   update-gradle-wrapper:
@@ -25,41 +29,32 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Make gradlew executable
-        run: |
-          if [ -f gradlew ]; then chmod +x gradlew; fi
-
       - name: Check and Update Gradle Wrapper
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Récupération de la dernière version stable officielle de Gradle
           RELEASE_INFO=$(curl -sSL https://services.gradle.org/versions/current)
           LATEST_VERSION=$(echo "$RELEASE_INFO" | jq -r '.version')
           CHECKSUM=$(echo "$RELEASE_INFO" | jq -r '.checksum')
 
           if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" = "null" ]; then
-            echo "::error::Impossible de récupérer la dernière version stable de Gradle."
+            echo "::error::Impossible de recuperer la derniere version stable de Gradle."
             exit 1
           fi
 
-          # 2. Récupération de la version actuelle déclarée dans gradle-wrapper.properties
           CURRENT_VERSION=$(grep 'distributionUrl' gradle/wrapper/gradle-wrapper.properties | sed -E 's/.*gradle-([0-9.]+)-.*/\1/')
-          echo "Version actuelle : $CURRENT_VERSION"
-          echo "Dernière version stable : $LATEST_VERSION"
+          echo "Version actuelle : $CURRENT_VERSION / derniere stable : $LATEST_VERSION"
 
           if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
-            echo "Le Gradle Wrapper est déjà à jour (version $CURRENT_VERSION)."
+            echo "Le Gradle Wrapper est deja a jour."
             exit 0
           fi
 
-          echo "Mise à niveau du Gradle Wrapper vers la version $LATEST_VERSION..."
-          ./gradlew wrapper --gradle-version "$LATEST_VERSION" --distribution-type bin --gradle-distribution-sha256-sum "$CHECKSUM"
-          ./gradlew wrapper --gradle-version "$LATEST_VERSION"
+          if [ -f gradlew ]; then chmod +x gradlew; GRADLE_CMD=./gradlew; else GRADLE_CMD=gradle; fi
+          $GRADLE_CMD wrapper --gradle-version "$LATEST_VERSION" --distribution-type bin --gradle-distribution-sha256-sum "$CHECKSUM"
 
-          # 3. Vérification des changements générés
           if git diff --quiet gradle/wrapper/ gradlew gradlew.bat; then
-            echo "Aucun changement détecté."
+            echo "Aucun changement detecte."
             exit 0
           fi
 
@@ -68,7 +63,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
-            echo "La branche $BRANCH existe déjà sur le dépôt distant."
+            echo "La branche $BRANCH existe deja."
             exit 0
           fi
 
@@ -79,7 +74,6 @@ jobs:
 
           gh pr create \
             --title "chore(deps): bump Gradle Wrapper to $LATEST_VERSION" \
-            --body "Mise à jour automatique du Gradle Wrapper vers la dernière version stable (GA) **$LATEST_VERSION**." \
+            --body "Mise a jour automatique du Gradle Wrapper vers la derniere version stable (GA) **$LATEST_VERSION**." \
             --head "$BRANCH" \
-            --base "main" \
-            --label "dependencies,gradle"
+            --base "main"
