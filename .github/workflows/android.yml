@@ -3,12 +3,24 @@ name: Android CI & Build APK
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'docs/**'
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test-and-build:
@@ -52,4 +64,4 @@ jobs:
         with:
           name: installapk-debug-apk
           path: app/build/outputs/apk/debug/*.apk
-          retention-days: 30
+          retention-days: 7
