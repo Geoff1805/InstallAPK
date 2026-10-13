@@ -110,7 +110,12 @@ class GitHubAppsRepository(private val context: Context) {
     }
 
     fun refreshSingleAppInstalledStatus(app: ProjectApp): ProjectApp {
-        val installed = getInstalledPackageInfo(app.packageName)
+        val effectivePkg = prefs.getString("pkg_${app.id}", null) ?: app.packageName
+        val installed = getInstalledPackageInfo(effectivePkg)
+
+        val lastInstalledArtId = prefs.getLong("installed_artifact_id_${app.id}", -1L).takeIf { it != -1L }
+        val lastInstalledTime = prefs.getLong("installed_timestamp_${app.id}", -1L).takeIf { it != -1L }
+
         return if (installed != null) {
             val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 installed.longVersionCode
@@ -118,14 +123,21 @@ class GitHubAppsRepository(private val context: Context) {
                 @Suppress("DEPRECATION")
                 installed.versionCode.toLong()
             }
+            val effectiveTime = maxOf(installed.lastUpdateTime, lastInstalledTime ?: 0L).takeIf { it > 0L }
             app.copy(
+                packageName = effectivePkg,
                 installedVersionCode = vCode,
-                installedVersionName = installed.versionName
+                installedVersionName = installed.versionName,
+                installedUpdateTime = effectiveTime,
+                lastInstalledArtifactId = lastInstalledArtId ?: app.lastInstalledArtifactId
             )
         } else {
             app.copy(
+                packageName = effectivePkg,
                 installedVersionCode = null,
-                installedVersionName = null
+                installedVersionName = null,
+                installedUpdateTime = null,
+                lastInstalledArtifactId = null
             )
         }
     }
@@ -172,6 +184,9 @@ class GitHubAppsRepository(private val context: Context) {
                     JSONObject(bodyStr).optString("login", "")
                 } catch (e: Exception) {
                     null
+                }
+                if (!username.isNullOrBlank()) {
+                    prefs.edit().putString("github_username", username).apply()
                 }
                 TokenValidationResult(
                     isValid = true,
@@ -248,10 +263,11 @@ class GitHubAppsRepository(private val context: Context) {
             } else null
 
             // Récupération des dépôts de l'utilisateur
+            val currentUsername = prefs.getString("github_username", "Geoff1805") ?: "Geoff1805"
             val reposUrl = if (authVal != null) {
                 "https://api.github.com/user/repos?affiliation=owner&sort=updated&per_page=100"
             } else {
-                "https://api.github.com/users/Geoff1805/repos?sort=updated&per_page=100"
+                "https://api.github.com/users/$currentUsername/repos?sort=updated&per_page=100"
             }
 
             val reqBuilder = Request.Builder()
@@ -636,7 +652,8 @@ class GitHubAppsRepository(private val context: Context) {
                 }
             }
 
-            val installed = getInstalledPackageInfo(app.packageName)
+            val effectivePkg = prefs.getString("pkg_${app.id}", null) ?: app.packageName
+            val installed = getInstalledPackageInfo(effectivePkg)
             val vCode = if (installed != null) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     installed.longVersionCode
@@ -646,6 +663,9 @@ class GitHubAppsRepository(private val context: Context) {
                 }
             } else null
             val vName = installed?.versionName
+            val lastInstalledArtId = prefs.getLong("installed_artifact_id_${app.id}", -1L).takeIf { it != -1L }
+            val lastInstalledTime = prefs.getLong("installed_timestamp_${app.id}", -1L).takeIf { it != -1L }
+            val effectiveInstalledTime = maxOf(installed?.lastUpdateTime ?: 0L, lastInstalledTime ?: 0L).takeIf { it > 0L }
 
             if (matchedArtifact != null) {
                 val artId = matchedArtifact.getLong("id")
@@ -660,23 +680,37 @@ class GitHubAppsRepository(private val context: Context) {
                     runNumber = fetchRunNumber(app.repoOwner, app.repoName, runId, token)
                 }
 
+                val remoteVersion = fetchRemoteVersionInfo(app.repoOwner, app.repoName, token)
+                val cachedApkCode = prefs.getLong("apk_vcode_${app.id}", -1L).takeIf { it != -1L }
+                val cachedApkName = prefs.getString("apk_vname_${app.id}", null)
+
+                val resolvedLatestCode = remoteVersion.first ?: cachedApkCode
+                val resolvedLatestName = remoteVersion.second ?: cachedApkName ?: runNumber?.let { "Run #$it" }
+                val artTimestamp = parseIsoDateToMillis(artDate)
+
                 app.copy(
+                    packageName = effectivePkg,
                     installedVersionCode = vCode,
                     installedVersionName = vName,
+                    installedUpdateTime = effectiveInstalledTime,
                     latestArtifactId = artId,
+                    lastInstalledArtifactId = lastInstalledArtId,
                     latestArtifactSize = artSize,
                     latestArtifactDate = artDate,
+                    artifactTimestamp = artTimestamp,
                     downloadUrl = archiveUrl,
-                    latestVersionCode = runNumber?.let { 1000L + it },
-                    latestVersionName = runNumber?.let { "1.0.$it" },
+                    latestVersionCode = resolvedLatestCode,
+                    latestVersionName = resolvedLatestName,
                     statusText = "Prêt"
                 )
             } else {
                 // Tenter de chercher dans les Releases GitHub
-                val releaseApp = fetchLatestReleaseAppInfo(app, token, vCode, vName)
+                val releaseApp = fetchLatestReleaseAppInfo(app, token, vCode, vName, effectiveInstalledTime)
                 releaseApp ?: app.copy(
+                    packageName = effectivePkg,
                     installedVersionCode = vCode,
                     installedVersionName = vName,
+                    installedUpdateTime = effectiveInstalledTime,
                     statusText = "Aucun APK pour l'instant (En attente du build CI)"
                 )
             }
@@ -685,11 +719,98 @@ class GitHubAppsRepository(private val context: Context) {
         }
     }
 
+    fun recordAppInstallationInitiated(appId: String, artifactId: Long?) {
+        prefs.edit().apply {
+            if (artifactId != null) {
+                putLong("installed_artifact_id_$appId", artifactId)
+            }
+            putLong("installed_timestamp_$appId", System.currentTimeMillis())
+        }.apply()
+    }
+
+    private fun parseIsoDateToMillis(dateStr: String): Long? {
+        if (dateStr.isBlank()) return null
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                java.time.Instant.parse(dateStr).toEpochMilli()
+            } else {
+                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
+                sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                sdf.parse(dateStr)?.time
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun fetchRemoteVersionInfo(owner: String, repo: String, token: String): Pair<Long?, String?> = withContext(Dispatchers.IO) {
+        // 1. Tenter version.properties
+        try {
+            val url = "https://api.github.com/repos/$owner/$repo/contents/version.properties"
+            val reqBuilder = Request.Builder()
+                .url(url)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "InstallAPK-Android")
+            if (token.isNotBlank()) {
+                val authVal = if (token.startsWith("Bearer ") || token.startsWith("token ")) token else "Bearer $token"
+                reqBuilder.header("Authorization", authVal)
+            }
+            val res = client.newCall(reqBuilder.build()).execute()
+            if (res.isSuccessful) {
+                val bodyStr = res.body?.string() ?: ""
+                val json = JSONObject(bodyStr)
+                val base64Content = json.optString("content", "").replace("\n", "").replace("\r", "")
+                if (base64Content.isNotBlank()) {
+                    val decoded = String(android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                    val codeRegex = Regex("""versionCode\s*=\s*(\d+)""")
+                    val nameRegex = Regex("""versionName\s*=\s*([^\r\n]+)""")
+                    val code = codeRegex.find(decoded)?.groupValues?.get(1)?.toLongOrNull()
+                    val name = nameRegex.find(decoded)?.groupValues?.get(1)?.trim()
+                    if (code != null || !name.isNullOrBlank()) {
+                        return@withContext Pair(code, name)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 2. Tenter pubspec.yaml (pour Flutter)
+        try {
+            val url = "https://api.github.com/repos/$owner/$repo/contents/pubspec.yaml"
+            val reqBuilder = Request.Builder()
+                .url(url)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "InstallAPK-Android")
+            if (token.isNotBlank()) {
+                val authVal = if (token.startsWith("Bearer ") || token.startsWith("token ")) token else "Bearer $token"
+                reqBuilder.header("Authorization", authVal)
+            }
+            val res = client.newCall(reqBuilder.build()).execute()
+            if (res.isSuccessful) {
+                val bodyStr = res.body?.string() ?: ""
+                val json = JSONObject(bodyStr)
+                val base64Content = json.optString("content", "").replace("\n", "").replace("\r", "")
+                if (base64Content.isNotBlank()) {
+                    val decoded = String(android.util.Base64.decode(base64Content, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                    val versionRegex = Regex("""version:\s*([0-9\.]+)(?:\+(\d+))?""")
+                    val match = versionRegex.find(decoded)
+                    if (match != null) {
+                        val name = match.groupValues.getOrNull(1)
+                        val code = match.groupValues.getOrNull(2)?.toLongOrNull() ?: 1L
+                        return@withContext Pair(code, name)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        Pair(null, null)
+    }
+
     private fun fetchLatestReleaseAppInfo(
         app: ProjectApp,
         token: String,
         installedCode: Long?,
-        installedName: String?
+        installedName: String?,
+        installedTime: Long?
     ): ProjectApp? {
         return try {
             val url = "https://api.github.com/repos/${app.repoOwner}/${app.repoName}/releases?per_page=5"
@@ -720,11 +841,14 @@ class GitHubAppsRepository(private val context: Context) {
                         val tagName = rel.optString("tag_name", "Release")
                         val size = asset.optLong("size", 0L)
                         val date = rel.optString("published_at", "")
+                        val relTimestamp = parseIsoDateToMillis(date)
                         return app.copy(
                             installedVersionCode = installedCode,
                             installedVersionName = installedName,
+                            installedUpdateTime = installedTime,
                             latestArtifactSize = size,
                             latestArtifactDate = date,
+                            artifactTimestamp = relTimestamp,
                             downloadUrl = downloadUrl,
                             latestVersionName = tagName,
                             statusText = "Release disponible"
@@ -859,11 +983,27 @@ class GitHubAppsRepository(private val context: Context) {
                 tempDownloadFile.delete()
             }
 
-            // Inspecter l'APK pour découvrir / confirmer le vrai packageName
+            // Inspecter l'APK pour découvrir / confirmer le vrai packageName, versionCode et versionName
             try {
                 val archiveInfo = context.packageManager.getPackageArchiveInfo(destinationApk.absolutePath, 0)
-                if (archiveInfo != null && !archiveInfo.packageName.isNullOrBlank()) {
-                    prefs.edit().putString("pkg_${app.repoName}", archiveInfo.packageName).apply()
+                if (archiveInfo != null) {
+                    val realPkg = archiveInfo.packageName
+                    val apkCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        archiveInfo.longVersionCode
+                    } else {
+                        @Suppress("DEPRECATION")
+                        archiveInfo.versionCode.toLong()
+                    }
+                    val apkName = archiveInfo.versionName
+                    prefs.edit().apply {
+                        if (!realPkg.isNullOrBlank()) {
+                            putString("pkg_${app.id}", realPkg)
+                            putString("pkg_${app.repoName}", realPkg)
+                        }
+                        putLong("apk_vcode_${app.id}", apkCode)
+                        if (!apkName.isNullOrBlank()) putString("apk_vname_${app.id}", apkName)
+                    }.apply()
+                    Log.i(tag, "APK inspecté pour ${app.id}: pkg=$realPkg, code=$apkCode, name=$apkName")
                 }
             } catch (e: Exception) {
                 Log.w(tag, "Impossible d'inspecter l'archive APK: ${e.message}")

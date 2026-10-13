@@ -109,6 +109,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         checkPermissions()
         refreshInstalledPackageStatuses()
         checkQueueProgressOnResume()
+        // Deuxième passe après court délai pour garantir la prise en compte du nouveau package par l'OS
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(400)
+            refreshInstalledPackageStatuses()
+        }
     }
 
     fun refreshInstalledPackageStatuses() {
@@ -126,20 +131,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val app = state.apps.firstOrNull { it.id == activeId } ?: return
         val freshApp = repository.refreshSingleAppInstalledStatus(app)
 
-        // Si l'application active a été installée avec succès (mise à jour prise en compte)
-        if (freshApp.isUpToDate) {
-            _uiState.update { s ->
-                s.copy(
-                    apps = s.apps.map { if (it.id == activeId) freshApp.copy(statusText = "Installé avec succès !") else it },
-                    activeUpdateId = null
-                )
-            }
-            // Enchaîner avec la suite de la file d'attente s'il y a des apps en attente
-            if (state.updateQueue.isNotEmpty()) {
-                processNextInQueue()
-            } else {
-                _uiState.update { it.copy(isUpdatingAll = false) }
-            }
+        _uiState.update { s ->
+            s.copy(
+                apps = s.apps.map { if (it.id == activeId) freshApp.copy(statusText = if (freshApp.isUpToDate) "À jour" else "Installé") else it },
+                activeUpdateId = null
+            )
+        }
+
+        // Enchaîner avec la suite de la file d'attente s'il y a des apps en attente
+        if (state.updateQueue.isNotEmpty()) {
+            processNextInQueue()
+        } else {
+            _uiState.update { it.copy(isUpdatingAll = false) }
         }
     }
 
@@ -316,6 +319,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     )
                 }
+                repository.recordAppInstallationInitiated(app.id, app.latestArtifactId)
                 ApkInstaller.installApk(context, apkFile)
             } else {
                 _uiState.update { state ->

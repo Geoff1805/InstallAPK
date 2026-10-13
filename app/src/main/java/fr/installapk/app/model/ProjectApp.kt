@@ -15,8 +15,11 @@ data class ProjectApp(
     val latestVersionCode: Long? = null,
     val latestVersionName: String? = null,
     val latestArtifactId: Long? = null,
+    val lastInstalledArtifactId: Long? = null,
     val latestArtifactSize: Long? = null,
     val latestArtifactDate: String? = null,
+    val artifactTimestamp: Long? = null,
+    val installedUpdateTime: Long? = null,
     val downloadUrl: String? = null,
     val isUpdating: Boolean = false,
     val isQueued: Boolean = false,
@@ -26,28 +29,38 @@ data class ProjectApp(
     val isInstalled: Boolean
         get() = !installedVersionName.isNullOrBlank()
 
-    val hasUpdateAvailable: Boolean
-        get() {
-            if (!isInstalled || downloadUrl == null) return false
-            if (latestVersionCode != null && installedVersionCode != null) {
-                return latestVersionCode > installedVersionCode
-            }
-            if (latestVersionName != null && installedVersionName != null) {
-                return latestVersionName != installedVersionName
-            }
-            return false
-        }
-
     val isUpToDate: Boolean
         get() {
             if (!isInstalled || downloadUrl == null) return false
-            if (latestVersionCode != null && installedVersionCode != null) {
-                return installedVersionCode >= latestVersionCode
+
+            // 1. Si cet artefact précis a déjà été installé avec succès
+            if (latestArtifactId != null && lastInstalledArtifactId != null && latestArtifactId == lastInstalledArtifactId) {
+                return true
             }
-            if (latestVersionName != null && installedVersionName != null) {
-                return installedVersionName == latestVersionName
+
+            // 2. Si le versionCode réel est disponible
+            if (latestVersionCode != null && installedVersionCode != null && latestVersionCode > 0) {
+                if (installedVersionCode >= latestVersionCode) return true
+                if (installedVersionCode < latestVersionCode) return false
             }
+
+            // 3. Si le versionName réel est disponible et concorde
+            if (latestVersionName != null && installedVersionName != null && installedVersionName == latestVersionName) {
+                return true
+            }
+
+            // 4. Par horodatage : si l'application sur le téléphone a été installée après la création de l'artefact (marge 60s)
+            if (installedUpdateTime != null && artifactTimestamp != null) {
+                return installedUpdateTime >= (artifactTimestamp - 60_000L)
+            }
+
             return false
+        }
+
+    val hasUpdateAvailable: Boolean
+        get() {
+            if (!isInstalled || downloadUrl == null) return false
+            return !isUpToDate
         }
 
     val needsInstallationOrUpdate: Boolean

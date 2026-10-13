@@ -7,7 +7,7 @@ plugins {
 
 android {
   namespace = "fr.installapk.app"
-  compileSdk = 37
+  compileSdk = 36
 
   val versionPropsFile = file("${rootDir}/version.properties")
   val versionProps = Properties()
@@ -21,7 +21,7 @@ android {
 
   val defaultToken = (project.findProperty("DEFAULT_GITHUB_TOKEN") as? String)
     ?: System.getenv("DEFAULT_GITHUB_TOKEN")
-    ?: "ghp_REDACTED_TOKEN"
+    ?: ""
 
   defaultConfig {
     applicationId = "fr.installapk.app"
@@ -31,7 +31,7 @@ android {
     versionName = appVersionName
 
     buildConfigField("String", "DEFAULT_GITHUB_TOKEN", "\"$defaultToken\"")
-    buildConfigField("String", "ALERT_EMAIL", "\"contact@installapk.app\"")
+    buildConfigField("String", "ALERT_EMAIL", "\"\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
