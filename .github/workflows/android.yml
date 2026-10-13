@@ -44,12 +44,23 @@ jobs:
         run: |
           if [ -f gradlew ]; then chmod +x gradlew; fi
 
-      - name: Prepare Debug Keystore
+      - name: Prepare Signing Keystore
+        env:
+          RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PWD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PWD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS_VAL: ${{ secrets.KEY_ALIAS }}
         run: |
-          if [ -f debug.keystore.base64 ]; then
-            mkdir -p app
+          mkdir -p app
+          if [ -n "$RELEASE_KEYSTORE_B64" ]; then
+            echo "Restauration du Release Keystore sécurisé depuis les secrets GitHub..."
+            echo "$RELEASE_KEYSTORE_B64" | base64 -d > app/release.keystore
+            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/app/release.keystore" >> $GITHUB_ENV
+            echo "STORE_PASSWORD=$STORE_PWD" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=$KEY_PWD" >> $GITHUB_ENV
+            echo "KEY_ALIAS=$KEY_ALIAS_VAL" >> $GITHUB_ENV
+          elif [ -f debug.keystore.base64 ]; then
             base64 -d debug.keystore.base64 > app/debug.keystore
-            echo "Keystore restauré depuis debug.keystore.base64"
           fi
 
       - name: Build Debug APK
