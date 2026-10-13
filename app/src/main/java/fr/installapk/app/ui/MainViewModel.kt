@@ -35,7 +35,15 @@ data class MainUiState(
         get() = apps.firstOrNull { it.isSelf }
 
     val managedApps: List<ProjectApp>
-        get() = apps.filter { !it.isSelf }
+        get() = apps
+            .filter { !it.isSelf }
+            .sortedWith(
+                compareByDescending<ProjectApp> { it.isUpdating || it.isQueued }
+                    .thenByDescending { it.hasUpdateAvailable }
+                    .thenByDescending { !it.isInstalled && it.downloadUrl != null }
+                    .thenByDescending { it.isUpToDate }
+                    .thenBy { it.displayName.lowercase() }
+            )
 
     val pendingManagedUpdatesCount: Int
         get() = managedApps.count { it.needsInstallationOrUpdate }
