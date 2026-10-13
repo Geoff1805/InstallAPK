@@ -79,3 +79,14 @@
      - Toute nouvelle application Android/mobile doit être compatible et immédiatement reconnue par `InstallAPK`.
      - `InstallAPK` trie les artefacts GitHub prioritairement par **date de création (`created_at`) décroissante** afin de toujours garantir l'installation du build le plus récent.
      - Les téléchargements depuis les dépôts privés s'effectuent via l'endpoint de l'API GitHub (`/releases/assets/{id}`) avec l'en-tête `Accept: application/octet-stream` pour éviter toute erreur 404.
+
+## Détection Proactive des Nouveaux Dépôts GitHub Android & Proposition d'Installation (/learn)
+- **Règle absolue (/learn)** : L'application `InstallAPK` et l'agent doivent surveiller proactivement les dépôts GitHub de l'utilisateur :
+  1. **Détection automatique de tout nouveau repo Android** :
+     - Dès qu'un nouveau dépôt GitHub de l'utilisateur est détecté (non encore acquitté/connu), le système analyse s'il s'agit d'une application Android (structure `app`, `android`, manifests, `build.gradle.kts` Android, Flutter/Dart mobile, topics `android`/`apk`, artefacts de build ou releases `.apk`).
+  2. **Proposition d'installation proactive** :
+     - Si le projet est une application Android, l'application `InstallAPK` affiche immédiatement une boîte de dialogue engageante proposant à l'utilisateur d'installer l'APK en un clic (ou de l'ajouter aux suivis si le premier build CI est encore en attente).
+     - La carte de l'application affiche un badge proéminent « ✨ NOUVEAU » et se positionne en tête de liste pour une visibilité immédiate.
+  3. **Prise en charge transverse par l'agent (/learn)** :
+     - Dès que l'agent ou l'utilisateur initialise un nouveau dépôt d'application Android, l'agent doit immédiatement vérifier son packaging APK, configurer le workflow GitHub Actions pour produire l'artefact `<AppName>.apk`, et s'assurer qu'il sera instantanément proposé dans `InstallAPK`.
+
