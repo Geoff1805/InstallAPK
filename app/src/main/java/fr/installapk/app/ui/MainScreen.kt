@@ -891,6 +891,144 @@ fun MainScreen(
             }
         )
     }
+
+    val newlyDetectedApp = uiState.newlyDetectedApp
+    if (newlyDetectedApp != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.postponeNewApp(newlyDetectedApp) },
+            icon = {
+                Icon(
+                    Icons.Default.Celebration,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(36.dp)
+                )
+            },
+            title = {
+                Text(
+                    "🎉 Nouveau projet Android détecté !",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        "Un nouveau dépôt GitHub d'application Android a été identifié :",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(newlyDetectedApp.iconEmoji, fontSize = 24.sp)
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        newlyDetectedApp.displayName,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = MaterialTheme.colorScheme.primary
+                                    ) {
+                                        Text(
+                                            "NOUVEAU",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    newlyDetectedApp.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                if (newlyDetectedApp.downloadUrl != null) {
+                                    val sizeMb = (newlyDetectedApp.latestArtifactSize ?: 0L).toDouble() / (1024 * 1024)
+                                    Text(
+                                        "📦 APK prêt au téléchargement (%.1f Mo)".format(sizeMb),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                } else {
+                                    Text(
+                                        "⏳ En attente du premier build GitHub Actions",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        if (newlyDetectedApp.downloadUrl != null)
+                            "Souhaitez-vous installer cette application dès maintenant sur votre appareil ?"
+                        else
+                            "Souhaitez-vous ajouter ce nouveau dépôt à votre liste d'applications suivies ?",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            },
+            confirmButton = {
+                if (newlyDetectedApp.downloadUrl != null) {
+                    Button(
+                        onClick = { viewModel.acceptNewAppInstall(newlyDetectedApp) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Installer l'APK")
+                    }
+                } else {
+                    Button(
+                        onClick = { viewModel.dismissNewApp(newlyDetectedApp) }
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Ajouter aux suivis")
+                    }
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { viewModel.postponeNewApp(newlyDetectedApp) }) {
+                        Text("Plus tard")
+                    }
+                    TextButton(onClick = { viewModel.dismissNewApp(newlyDetectedApp) }) {
+                        Text("Ignorer")
+                    }
+                }
+            }
+        )
+    }
 }
 
 /**
@@ -959,8 +1097,16 @@ fun SelfAppCard(
                             )
                         }
                     }
+                    val installedName = app.installedVersionName?.let { ProjectApp.cleanVersion(it) } ?: "?"
+                    val latestName = app.latestVersionName?.let { ProjectApp.cleanVersion(it) } ?: "?"
+                    val subtitle = when {
+                        isUpToDate -> "Version actuelle : v$installedName (À jour)"
+                        installedName != latestName && installedName != "?" && latestName != "?" ->
+                            "Mise à jour disponible : v$installedName ➔ v$latestName"
+                        else -> "Nouveau build CI disponible : v$installedName"
+                    }
                     Text(
-                        text = if (isUpToDate) "Version actuelle : v${app.installedVersionName} (À jour)" else "Mise à jour disponible : v${app.installedVersionName} ➔ v${app.latestVersionName}",
+                        text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1075,10 +1221,15 @@ fun AppCard(
     val hasNoApkYet = app.downloadUrl == null
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (app.isNew) Modifier.border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp))
+                else Modifier
+            ),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = if (app.isNew) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surface
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
@@ -1101,11 +1252,28 @@ fun AppCard(
                 Spacer(modifier = Modifier.width(12.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = app.displayName,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = app.displayName,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp
+                        )
+                        if (app.isNew) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            ) {
+                                Text(
+                                    "✨ NOUVEAU",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
                     Text(
                         text = app.description,
                         style = MaterialTheme.typography.bodySmall,
@@ -1168,7 +1336,7 @@ fun AppCard(
                             color = MaterialTheme.colorScheme.surfaceVariant
                         ) {
                             Text(
-                                "✓ À jour (v${app.installedVersionName ?: "?"})",
+                                "✓ À jour (v${ProjectApp.cleanVersion(app.installedVersionName ?: "?")})",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.primary,
@@ -1181,8 +1349,18 @@ fun AppCard(
                             shape = RoundedCornerShape(6.dp),
                             color = MaterialTheme.colorScheme.errorContainer
                         ) {
+                            val cleanInst = ProjectApp.cleanVersion(app.installedVersionName)
+                            val cleanLat = ProjectApp.cleanVersion(app.latestVersionName)
+                            val badgeText = when {
+                                cleanInst.isNotBlank() && cleanLat.isNotBlank() && !cleanInst.equals(cleanLat, ignoreCase = true) ->
+                                    "⬆ Mise à jour disponible (v$cleanInst → v$cleanLat)"
+                                cleanInst.isNotBlank() ->
+                                    "⬆ Nouveau build CI disponible (v$cleanInst)"
+                                else ->
+                                    "⬆ Mise à jour disponible (v${app.latestVersionName ?: "?"})"
+                            }
                             Text(
-                                "⬆ Mise à jour disponible (v${app.installedVersionName ?: "?"} → v${app.latestVersionName ?: "?"})",
+                                badgeText,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onErrorContainer,

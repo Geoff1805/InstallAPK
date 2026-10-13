@@ -126,6 +126,44 @@ class ProjectAppVersionTest {
     }
 
     @Test
+    fun testSemanticVersionTakesPrecedenceOverBogusVersionCode() {
+        // Scénario réel Bullix : le code installé est 1118 (généré par la CI 1000 + run),
+        // mais le repo git a un versionCode statique de 1.
+        // La nouvelle version disponible est 1.0.119 (supérieure à 1.0.118).
+        val app = createApp(
+            installedVersionCode = 1118L,
+            installedVersionName = "1.0.118",
+            latestVersionCode = 1L, // Bogus/statique depuis version.properties
+            latestVersionName = "1.0.119" // Tag officiel de release
+        )
+        assertFalse("1.0.118 < 1.0.119 donc mise à jour REQUISE malgré le code statique", app.isUpToDate)
+        assertTrue("Une mise à jour doit être détectée", app.hasUpdateAvailable)
+    }
+
+    @Test
+    fun testCleanVersionStripsAppTitlePrefix() {
+        assertEquals("1.0.119", ProjectApp.cleanVersion("Bullix v1.0.119"))
+        assertEquals("1.0.14", ProjectApp.cleanVersion("InstallAPK v1.0.14"))
+        assertEquals("0.6.4", ProjectApp.cleanVersion("Needix 0.6.4"))
+        assertEquals("1.2.3", ProjectApp.cleanVersion("v1.2.3"))
+        assertEquals("1.2.3", ProjectApp.cleanVersion("release-1.2.3"))
+    }
+
+    @Test
+    fun testSameArtifactIdConfirmedIsUpToDate() {
+        val app = createApp(
+            installedVersionCode = 10L,
+            installedVersionName = "0.6.4",
+            latestVersionCode = 10L,
+            latestVersionName = "0.6.4",
+            latestArtifactId = 9999L,
+            lastInstalledArtifactId = 9999L
+        )
+        assertTrue("Même ID d'artefact déjà installé -> À jour", app.isUpToDate)
+        assertFalse(app.hasUpdateAvailable)
+    }
+
+    @Test
     fun testNotInstalledApp() {
         val uninstalledApp = createApp(
             installedVersionName = null,

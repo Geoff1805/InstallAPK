@@ -80,6 +80,7 @@ class GitHubAppsRepository(private val context: Context) {
         merged.addAll(defaultProjects)
 
         // Charger les projets découverts depuis le cache SharedPreferences
+        val acknowledgedSet = getAcknowledgedRepoIds()
         val cachedDiscoveredJson = prefs.getString("cached_discovered_apps", null)
         if (!cachedDiscoveredJson.isNullOrBlank()) {
             try {
@@ -88,6 +89,8 @@ class GitHubAppsRepository(private val context: Context) {
                     val obj = jsonArray.getJSONObject(i)
                     val id = obj.getString("id")
                     if (merged.none { it.id.equals(id, ignoreCase = true) }) {
+                        val isSelf = obj.optBoolean("isSelf", false)
+                        val isNew = !isSelf && !acknowledgedSet.contains(id.lowercase())
                         merged.add(
                             ProjectApp(
                                 id = id,
@@ -97,7 +100,8 @@ class GitHubAppsRepository(private val context: Context) {
                                 displayName = obj.optString("displayName", id),
                                 description = obj.optString("description", "Application Android GitHub"),
                                 iconEmoji = obj.optString("iconEmoji", "📱"),
-                                isSelf = obj.optBoolean("isSelf", false),
+                                isSelf = isSelf,
+                                isNew = isNew,
                                 artifactPattern = obj.optString("artifactPattern", "apk")
                             )
                         )
@@ -112,7 +116,8 @@ class GitHubAppsRepository(private val context: Context) {
     }
 
     fun refreshSingleAppInstalledStatus(app: ProjectApp): ProjectApp {
-        var effectivePkg = prefs.getString("pkg_${app.id}", null) ?: app.packageName
+        val defaultApp = defaultProjects.firstOrNull { it.id.equals(app.id, ignoreCase = true) }
+        var effectivePkg = defaultApp?.packageName ?: prefs.getString("pkg_${app.id}", null) ?: app.packageName
         var installed = getInstalledPackageInfo(effectivePkg)
 
         // Si non trouvé par le package name théorique, tenter une recherche de secours
@@ -125,18 +130,44 @@ class GitHubAppsRepository(private val context: Context) {
             }
         }
 
-        val lastInstalledArtId = prefs.getLong("installed_artifact_id_${app.id}", -1L).takeIf { it != -1L }
-        val lastInstalledTime = prefs.getLong("installed_timestamp_${app.id}", -1L).takeIf { it != -1L }
-
-        return if (installed != null) {
+        if (installed != null) {
             val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 installed.longVersionCode
             } else {
                 @Suppress("DEPRECATION")
                 installed.versionCode.toLong()
             }
-            val effectiveTime = maxOf(installed.lastUpdateTime, lastInstalledTime ?: 0L).takeIf { it > 0L }
-            app.copy(
+
+            // Confirmer l'installation en attente si le système Android a bien enregistré le nouveau package
+            val pendingArtId = prefs.getLong("pending_art_id_${app.id}", -1L).takeIf { it != -1L }
+            val pendingVCode = prefs.getLong("pending_vcode_${app.id}", -1L).takeIf { it != -1L }
+            val pendingVName = prefs.getString("pending_vname_${app.id}", null)
+            val pendingTime = prefs.getLong("pending_install_time_${app.id}", -1L).takeIf { it != -1L }
+
+            if (pendingArtId != null) {
+                val isConfirmed = when {
+                    pendingVCode != null && vCode >= pendingVCode -> true
+                    !pendingVName.isNullOrBlank() && installed.versionName != null &&
+                        ProjectApp.cleanVersion(installed.versionName).equals(ProjectApp.cleanVersion(pendingVName), ignoreCase = true) -> true
+                    pendingTime != null && installed.lastUpdateTime >= (pendingTime - 30_000L) -> true
+                    else -> false
+                }
+                if (isConfirmed) {
+                    prefs.edit().apply {
+                        putLong("installed_artifact_id_${app.id}", pendingArtId)
+                        putLong("installed_timestamp_${app.id}", installed.lastUpdateTime)
+                        remove("pending_art_id_${app.id}")
+                        remove("pending_vcode_${app.id}")
+                        remove("pending_vname_${app.id}")
+                        remove("pending_install_time_${app.id}")
+                    }.apply()
+                }
+            }
+
+            val lastInstalledArtId = prefs.getLong("installed_artifact_id_${app.id}", -1L).takeIf { it != -1L }
+            val effectiveTime = installed.lastUpdateTime
+
+            return app.copy(
                 packageName = effectivePkg,
                 installedVersionCode = vCode,
                 installedVersionName = installed.versionName,
@@ -148,8 +179,12 @@ class GitHubAppsRepository(private val context: Context) {
             prefs.edit().apply {
                 remove("installed_artifact_id_${app.id}")
                 remove("installed_timestamp_${app.id}")
+                remove("pending_art_id_${app.id}")
+                remove("pending_vcode_${app.id}")
+                remove("pending_vname_${app.id}")
+                remove("pending_install_time_${app.id}")
             }.apply()
-            app.copy(
+            return app.copy(
                 packageName = effectivePkg,
                 installedVersionCode = null,
                 installedVersionName = null,
@@ -265,6 +300,32 @@ class GitHubAppsRepository(private val context: Context) {
         }
     }
 
+    fun getAcknowledgedRepoIds(): Set<String> {
+        val saved = prefs.getStringSet("acknowledged_android_repos", null)
+        if (saved != null) {
+            return saved
+        }
+        val initialSet = mutableSetOf<String>()
+        initialSet.addAll(defaultProjects.map { it.id.lowercase() })
+        val cached = prefs.getString("cached_discovered_apps", null)
+        if (!cached.isNullOrBlank()) {
+            try {
+                val arr = JSONArray(cached)
+                for (i in 0 until arr.length()) {
+                    initialSet.add(arr.getJSONObject(i).getString("id").lowercase())
+                }
+            } catch (_: Exception) {}
+        }
+        prefs.edit().putStringSet("acknowledged_android_repos", initialSet).apply()
+        return initialSet
+    }
+
+    fun markRepoAcknowledged(appId: String) {
+        val current = prefs.getStringSet("acknowledged_android_repos", emptySet())?.toMutableSet() ?: mutableSetOf()
+        current.add(appId.lowercase())
+        prefs.edit().putStringSet("acknowledged_android_repos", current).apply()
+    }
+
     suspend fun discoverAndRefreshApps(token: String): List<ProjectApp> = withContext(Dispatchers.IO) {
         val discoveredProjects = discoverAndroidProjects(token)
 
@@ -275,11 +336,12 @@ class GitHubAppsRepository(private val context: Context) {
         for (discovered in discoveredProjects) {
             val index = allProjects.indexOfFirst { it.id.equals(discovered.id, ignoreCase = true) }
             if (index >= 0) {
-                // Mettre à jour avec le package name résolu si besoin
+                // Mettre à jour avec le package name résolu si besoin et conserver isNew
                 val existing = allProjects[index]
-                if (existing.packageName.isBlank() && discovered.packageName.isNotBlank()) {
-                    allProjects[index] = existing.copy(packageName = discovered.packageName)
-                }
+                allProjects[index] = existing.copy(
+                    packageName = if (existing.packageName.isBlank()) discovered.packageName else existing.packageName,
+                    isNew = discovered.isNew
+                )
             } else {
                 allProjects.add(discovered)
             }
@@ -298,6 +360,7 @@ class GitHubAppsRepository(private val context: Context) {
         val customSet = prefs.getStringSet("user_custom_repos", emptySet())?.toMutableSet() ?: mutableSetOf()
         customSet.add(repoName.trim())
         prefs.edit().putStringSet("user_custom_repos", customSet).apply()
+        markRepoAcknowledged(repoName.trim())
     }
 
     private fun isUserCustomRepo(repoName: String): Boolean {
@@ -389,6 +452,7 @@ class GitHubAppsRepository(private val context: Context) {
                     val resolvedPackageName = resolvePackageName(repoOwner, repoName, token)
                     val emoji = determineEmoji(repoName, description)
                     val isSelf = repoName.equals("InstallAPK", ignoreCase = true)
+                    val isNew = !isSelf && !getAcknowledgedRepoIds().contains(repoName.lowercase())
 
                     projects.add(
                         ProjectApp(
@@ -400,6 +464,7 @@ class GitHubAppsRepository(private val context: Context) {
                             description = if (description.isNotBlank()) description else "Application Android GitHub",
                             iconEmoji = emoji,
                             isSelf = isSelf,
+                            isNew = isNew,
                             artifactPattern = "apk"
                         )
                     )
@@ -646,85 +711,8 @@ class GitHubAppsRepository(private val context: Context) {
 
     suspend fun fetchLatestAppInfo(app: ProjectApp, token: String): ProjectApp = withContext(Dispatchers.IO) {
         try {
-            val url = "https://api.github.com/repos/${app.repoOwner}/${app.repoName}/actions/artifacts?per_page=100"
-            val reqBuilder = Request.Builder()
-                .url(url)
-                .header("Accept", "application/vnd.github+json")
-                .header("User-Agent", "InstallAPK-Android")
-
-            if (token.isNotBlank()) {
-                val authVal = if (token.startsWith("Bearer ") || token.startsWith("token ")) token else "Bearer $token"
-                reqBuilder.header("Authorization", authVal)
-            }
-
-            val response = client.newCall(reqBuilder.build()).execute()
-            if (!response.isSuccessful) {
-                return@withContext app.copy(
-                    statusText = if (response.code == 401) "Clé invalide (401)" else "Erreur API (${response.code})"
-                )
-            }
-
-            val bodyStr = response.body?.string() ?: return@withContext app
-            val json = JSONObject(bodyStr)
-            val artifacts = json.optJSONArray("artifacts") ?: JSONArray()
-
-            val candidateArtifacts = mutableListOf<JSONObject>()
-            val appIdNorm = app.id.lowercase().replace("-", "").replace("_", "")
-            val repoNorm = app.repoName.lowercase().replace("-", "").replace("_", "")
-            val patNorm = app.artifactPattern.lowercase().replace("-", "").replace("_", "").replace(".apk", "")
-
-            for (i in 0 until artifacts.length()) {
-                val art = artifacts.getJSONObject(i)
-                val name = art.optString("name", "")
-                val isExpired = art.optBoolean("expired", false)
-                val size = art.optLong("size_in_bytes", 0L)
-                if (isExpired || isExcludedArtifact(name) || size < 200_000L) continue
-
-                // Détection robuste :
-                // 1. Motif normalisé exact (ex: InstallAPK.apk, Bullix.apk, Needix.apk)
-                // 2. Motif d'artefact défini (ex: Needix-Release-APK, bullix-debug-apk)
-                // 3. Tout artefact contenant le nom de l'app ou du repo et le mot "apk"
-                val normalizedName = name.lowercase().replace("-", "").replace("_", "").replace(".apk", "")
-                val repoPrefix = app.repoName.split("-", "_").firstOrNull { it.length >= 4 }?.lowercase() ?: ""
-                val matchesApp = normalizedName.contains(appIdNorm) ||
-                    normalizedName.contains(repoNorm) ||
-                    (repoPrefix.isNotBlank() && normalizedName.contains(repoPrefix)) ||
-                    (patNorm.isNotBlank() && normalizedName.contains(patNorm))
-                val hasApk = name.contains("apk", ignoreCase = true)
-
-                if (matchesApp && hasApk) {
-                    candidateArtifacts.add(art)
-                }
-            }
-
-            // Tri intelligent :
-            // 1. Branche 'main' ou 'master' en priorité absolue
-            // 2. CRITÈRE MAJEUR : Date de création la plus récente (created_at) ! Le dernier build publié l'emporte toujours.
-            // 3. En cas de même build / même date : priorité à la correspondance du nom exact (ex: App.apk)
-            // 4. Préférence au build Release par rapport au build Debug
-            var matchedArtifact: JSONObject? = candidateArtifacts
-                .sortedWith(
-                    compareByDescending<JSONObject> {
-                        val branch = it.optJSONObject("workflow_run")?.optString("head_branch", "") ?: ""
-                        branch.equals("main", ignoreCase = true) || branch.equals("master", ignoreCase = true)
-                    }
-                    .thenByDescending {
-                        it.optString("created_at", "")
-                    }
-                    .thenByDescending {
-                        val name = it.optString("name", "")
-                        val exactName = "${app.id}.apk"
-                        name.equals(exactName, ignoreCase = true) ||
-                            (app.artifactPattern.isNotBlank() && name.equals(app.artifactPattern, ignoreCase = true))
-                    }
-                    .thenByDescending {
-                        val name = it.optString("name", "")
-                        name.contains("release", ignoreCase = true)
-                    }
-                )
-                .firstOrNull()
-
-            var effectivePkg = prefs.getString("pkg_${app.id}", null) ?: app.packageName
+            val defaultApp = defaultProjects.firstOrNull { it.id.equals(app.id, ignoreCase = true) }
+            var effectivePkg = defaultApp?.packageName ?: prefs.getString("pkg_${app.id}", null) ?: app.packageName
             var installed = getInstalledPackageInfo(effectivePkg)
             if (installed == null) {
                 val foundPkg = findInstalledPackageForApp(app)
@@ -744,30 +732,138 @@ class GitHubAppsRepository(private val context: Context) {
                 }
             } else null
             val vName = installed?.versionName
+            val effectiveInstalledTime = installed?.lastUpdateTime
             val lastInstalledArtId = prefs.getLong("installed_artifact_id_${app.id}", -1L).takeIf { it != -1L }
-            val lastInstalledTime = prefs.getLong("installed_timestamp_${app.id}", -1L).takeIf { it != -1L }
-            val effectiveInstalledTime = maxOf(installed?.lastUpdateTime ?: 0L, lastInstalledTime ?: 0L).takeIf { it > 0L }
+
+            // 1. Consulter les Releases GitHub (APK directs prêts à installer et tags officiels)
+            val releaseApp = fetchLatestReleaseAppInfo(app, token, vCode, vName, effectiveInstalledTime)
+
+            // 2. Consulter les Artefacts GitHub Actions
+            val url = "https://api.github.com/repos/${app.repoOwner}/${app.repoName}/actions/artifacts?per_page=100"
+            val reqBuilder = Request.Builder()
+                .url(url)
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "InstallAPK-Android")
+
+            if (token.isNotBlank()) {
+                val authVal = if (token.startsWith("Bearer ") || token.startsWith("token ")) token else "Bearer $token"
+                reqBuilder.header("Authorization", authVal)
+            }
+
+            val response = client.newCall(reqBuilder.build()).execute()
+            var matchedArtifact: JSONObject? = null
+
+            if (response.isSuccessful) {
+                val bodyStr = response.body?.string() ?: ""
+                val json = JSONObject(bodyStr)
+                val artifacts = json.optJSONArray("artifacts") ?: JSONArray()
+                val candidateArtifacts = mutableListOf<JSONObject>()
+                val appIdNorm = app.id.lowercase().replace("-", "").replace("_", "")
+                val repoNorm = app.repoName.lowercase().replace("-", "").replace("_", "")
+                val patNorm = app.artifactPattern.lowercase().replace("-", "").replace("_", "").replace(".apk", "")
+
+                for (i in 0 until artifacts.length()) {
+                    val art = artifacts.getJSONObject(i)
+                    val name = art.optString("name", "")
+                    val isExpired = art.optBoolean("expired", false)
+                    val size = art.optLong("size_in_bytes", 0L)
+                    if (isExpired || isExcludedArtifact(name) || size < 200_000L) continue
+
+                    val normalizedName = name.lowercase().replace("-", "").replace("_", "").replace(".apk", "")
+                    val repoPrefix = app.repoName.split("-", "_").firstOrNull { it.length >= 4 }?.lowercase() ?: ""
+                    val matchesApp = normalizedName.contains(appIdNorm) ||
+                        normalizedName.contains(repoNorm) ||
+                        (repoPrefix.isNotBlank() && normalizedName.contains(repoPrefix)) ||
+                        (patNorm.isNotBlank() && normalizedName.contains(patNorm))
+                    val hasApk = name.contains("apk", ignoreCase = true)
+
+                    if (matchesApp && hasApk) {
+                        candidateArtifacts.add(art)
+                    }
+                }
+
+                matchedArtifact = candidateArtifacts
+                    .sortedWith(
+                        compareByDescending<JSONObject> {
+                            val branch = it.optJSONObject("workflow_run")?.optString("head_branch", "") ?: ""
+                            branch.equals("main", ignoreCase = true) || branch.equals("master", ignoreCase = true)
+                        }
+                        .thenByDescending {
+                            it.optString("created_at", "")
+                        }
+                        .thenByDescending {
+                            val name = it.optString("name", "")
+                            val exactName = "${app.id}.apk"
+                            name.equals(exactName, ignoreCase = true) ||
+                                (app.artifactPattern.isNotBlank() && name.equals(app.artifactPattern, ignoreCase = true))
+                        }
+                        .thenByDescending {
+                            val name = it.optString("name", "")
+                            name.contains("release", ignoreCase = true)
+                        }
+                    )
+                    .firstOrNull()
+            }
+
+            val remoteVersion = fetchRemoteVersionInfo(app.repoOwner, app.repoName, token)
+            val cachedApkCode = prefs.getLong("apk_vcode_${app.id}", -1L).takeIf { it != -1L }
+            val cachedApkName = prefs.getString("apk_vname_${app.id}", null)
+
+            // 3. Synthèse et arbitrage entre Release et Artefact Actions
+            val releaseTimestamp = releaseApp?.artifactTimestamp ?: 0L
+            var artifactTimestamp: Long? = null
+            var runNumber: Long? = null
+            var artId: Long? = null
+            var artSize: Long? = null
+            var artDate: String? = null
+            var archiveUrl: String? = null
 
             if (matchedArtifact != null) {
-                val artId = matchedArtifact.getLong("id")
-                val artSize = matchedArtifact.getLong("size_in_bytes")
-                val artDate = matchedArtifact.optString("created_at", "")
-                val archiveUrl = matchedArtifact.getString("archive_download_url")
+                artId = matchedArtifact.getLong("id")
+                artSize = matchedArtifact.getLong("size_in_bytes")
+                artDate = matchedArtifact.optString("created_at", "")
+                archiveUrl = matchedArtifact.getString("archive_download_url")
+                artifactTimestamp = parseIsoDateToMillis(artDate)
+
                 val workflowRun = matchedArtifact.optJSONObject("workflow_run")
                 val runId = workflowRun?.optLong("id")
-
-                var runNumber: Long? = null
                 if (runId != null) {
                     runNumber = fetchRunNumber(app.repoOwner, app.repoName, runId, token)
                 }
+            }
 
-                val remoteVersion = fetchRemoteVersionInfo(app.repoOwner, app.repoName, token)
-                val cachedApkCode = prefs.getLong("apk_vcode_${app.id}", -1L).takeIf { it != -1L }
-                val cachedApkName = prefs.getString("apk_vname_${app.id}", null)
+            val artTs = artifactTimestamp ?: 0L
 
-                val resolvedLatestCode = maxOf(remoteVersion.first ?: 0L, cachedApkCode ?: 0L).takeIf { it > 0L }
-                val resolvedLatestName = remoteVersion.second ?: cachedApkName ?: runNumber?.let { "Run #$it" }
-                val artTimestamp = parseIsoDateToMillis(artDate)
+            if (releaseApp != null && (matchedArtifact == null || releaseTimestamp >= (artTs - 300_000L))) {
+                // Priorité à la Release : APK direct sans décompression ZIP, tag sémantique garanti
+                val resolvedLatestCode = when {
+                    runNumber != null && vCode != null && vCode >= 1000L -> maxOf(remoteVersion.first ?: 0L, 1000L + runNumber)
+                    remoteVersion.first != null -> remoteVersion.first
+                    cachedApkCode != null -> cachedApkCode
+                    runNumber != null -> runNumber
+                    else -> null
+                }
+
+                releaseApp.copy(
+                    packageName = effectivePkg,
+                    installedVersionCode = vCode,
+                    installedVersionName = vName,
+                    installedUpdateTime = effectiveInstalledTime,
+                    latestVersionCode = resolvedLatestCode,
+                    latestArtifactId = artId ?: releaseApp.latestArtifactId,
+                    lastInstalledArtifactId = lastInstalledArtId ?: app.lastInstalledArtifactId,
+                    statusText = "Prêt"
+                )
+            } else if (matchedArtifact != null && archiveUrl != null) {
+                // Priorité à l'artefact GitHub Actions (ex: Needix, ou commit main récent sans release)
+                val resolvedLatestCode = maxOf(remoteVersion.first ?: 0L, cachedApkCode ?: 0L).takeIf { it > 0L } ?: runNumber
+                val resolvedLatestName = when {
+                    remoteVersion.second != null && !remoteVersion.second.equals("1.0.0", ignoreCase = true) -> ProjectApp.cleanVersion(remoteVersion.second)
+                    runNumber != null -> "Run #$runNumber"
+                    remoteVersion.second != null -> ProjectApp.cleanVersion(remoteVersion.second)
+                    cachedApkName != null -> ProjectApp.cleanVersion(cachedApkName)
+                    else -> "Run #${artId ?: 0}"
+                }
 
                 app.copy(
                     packageName = effectivePkg,
@@ -775,19 +871,20 @@ class GitHubAppsRepository(private val context: Context) {
                     installedVersionName = vName,
                     installedUpdateTime = effectiveInstalledTime,
                     latestArtifactId = artId,
-                    lastInstalledArtifactId = lastInstalledArtId,
+                    lastInstalledArtifactId = lastInstalledArtId ?: app.lastInstalledArtifactId,
                     latestArtifactSize = artSize,
                     latestArtifactDate = artDate,
-                    artifactTimestamp = artTimestamp,
+                    artifactTimestamp = artifactTimestamp,
                     downloadUrl = archiveUrl,
+                    isDirectApk = false,
                     latestVersionCode = resolvedLatestCode,
                     latestVersionName = resolvedLatestName,
                     statusText = "Prêt"
                 )
+            } else if (releaseApp != null) {
+                releaseApp
             } else {
-                // Tenter de chercher dans les Releases GitHub
-                val releaseApp = fetchLatestReleaseAppInfo(app, token, vCode, vName, effectiveInstalledTime)
-                releaseApp ?: app.copy(
+                app.copy(
                     packageName = effectivePkg,
                     installedVersionCode = vCode,
                     installedVersionName = vName,
@@ -800,13 +897,31 @@ class GitHubAppsRepository(private val context: Context) {
         }
     }
 
-    fun recordAppInstallationInitiated(appId: String, artifactId: Long?) {
-        prefs.edit().apply {
-            if (artifactId != null) {
-                putLong("installed_artifact_id_$appId", artifactId)
-            }
-            putLong("installed_timestamp_$appId", System.currentTimeMillis())
-        }.apply()
+    fun recordAppInstallationInitiated(appId: String, artifactId: Long?, apkFile: File? = null) {
+        val editor = prefs.edit()
+        if (artifactId != null) {
+            editor.putLong("pending_art_id_$appId", artifactId)
+        }
+        editor.putLong("pending_install_time_$appId", System.currentTimeMillis())
+
+        if (apkFile != null && apkFile.exists()) {
+            try {
+                val archiveInfo = context.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)
+                if (archiveInfo != null) {
+                    val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        archiveInfo.longVersionCode
+                    } else {
+                        @Suppress("DEPRECATION")
+                        archiveInfo.versionCode.toLong()
+                    }
+                    editor.putLong("pending_vcode_$appId", vCode)
+                    if (!archiveInfo.versionName.isNullOrBlank()) {
+                        editor.putString("pending_vname_$appId", archiveInfo.versionName)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        editor.apply()
     }
 
     private fun parseIsoDateToMillis(dateStr: String): Long? {

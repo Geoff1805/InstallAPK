@@ -23,6 +23,7 @@ data class MainUiState(
     val isTokenValidating: Boolean = false,
     val alertEmail: String = BuildConfig.ALERT_EMAIL,
     val apps: List<ProjectApp> = emptyList(),
+    val newlyDetectedApp: ProjectApp? = null,    // Nouveau dépôt Android détecté à proposer
     val isLoading: Boolean = false,
     val isUpdatingAll: Boolean = false,
     val updateQueue: List<String> = emptyList(), // IDs des apps dans la file d'attente
@@ -39,7 +40,8 @@ data class MainUiState(
         get() = apps
             .filter { !it.isSelf }
             .sortedWith(
-                compareByDescending<ProjectApp> { it.isUpdating || it.isQueued }
+                compareByDescending<ProjectApp> { it.isNew } // Priorité visuelle aux nouveaux projets
+                    .thenByDescending { it.isUpdating || it.isQueued }
                     .thenByDescending { it.hasUpdateAvailable }
                     .thenByDescending { !it.isInstalled && it.downloadUrl != null }
                     .thenByDescending { it.isUpToDate }
@@ -159,6 +161,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _uiState.update { it.copy(isUpdatingAll = false) }
                     }
                     return
+                } else if (!state.isUpdatingAll) {
+                    // L'installation individuelle a été annulée ou n'a pas été confirmée par Android
+                    _uiState.update { s ->
+                        s.copy(
+                            apps = s.apps.map { if (it.id == activeId) freshApp.copy(statusText = "Prêt", isUpdating = false, isQueued = false) else it },
+                            activeUpdateId = null,
+                            isWaitingForUserInstall = false
+                        )
+                    }
                 }
             }
         }
@@ -185,12 +196,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             val updatedList = repository.discoverAndRefreshApps(currentToken)
 
+            // Détecter si un nouveau dépôt Android a été trouvé et n'a pas encore été acquitté
+            val firstNewApp = updatedList.firstOrNull { it.isNew && !it.isSelf }
+
             _uiState.update {
                 it.copy(
                     apps = updatedList,
+                    newlyDetectedApp = firstNewApp,
                     isLoading = false
                 )
             }
+        }
+    }
+
+    /**
+     * L'utilisateur accepte la proposition d'installer le nouveau repo Android détecté.
+     */
+    fun acceptNewAppInstall(app: ProjectApp) {
+        repository.markRepoAcknowledged(app.id)
+        _uiState.update { s ->
+            val remainingNew = s.apps.firstOrNull { it.isNew && it.id != app.id && !it.isSelf }
+            s.copy(
+                newlyDetectedApp = remainingNew,
+                apps = s.apps.map { if (it.id == app.id) it.copy(isNew = false) else it }
+            )
+        }
+        if (app.downloadUrl != null) {
+            installOrUpdateApp(app, forceReinstall = false)
+        }
+    }
+
+    /**
+     * L'utilisateur acquitte la proposition sans installer immédiatement (ex: Ignorer ou Ajouter).
+     */
+    fun dismissNewApp(app: ProjectApp) {
+        repository.markRepoAcknowledged(app.id)
+        _uiState.update { s ->
+            val remainingNew = s.apps.firstOrNull { it.isNew && it.id != app.id && !it.isSelf }
+            s.copy(
+                newlyDetectedApp = remainingNew,
+                apps = s.apps.map { if (it.id == app.id) it.copy(isNew = false) else it }
+            )
+        }
+    }
+
+    /**
+     * L'utilisateur reporte la décision à plus tard pour cette session.
+     */
+    fun postponeNewApp(app: ProjectApp) {
+        _uiState.update { s ->
+            s.copy(newlyDetectedApp = null)
         }
     }
 
@@ -345,7 +400,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (apkFile != null) {
-                repository.recordAppInstallationInitiated(app.id, app.latestArtifactId)
+                repository.recordAppInstallationInitiated(app.id, app.latestArtifactId, apkFile)
                 _uiState.update { state ->
                     state.copy(
                         isWaitingForUserInstall = true,
