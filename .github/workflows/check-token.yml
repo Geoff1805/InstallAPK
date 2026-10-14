@@ -99,3 +99,4 @@ jobs:
             }
         env:
           ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+

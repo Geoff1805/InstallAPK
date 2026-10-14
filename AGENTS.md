@@ -90,3 +90,4 @@
   3. **Prise en charge transverse par l'agent (/learn)** :
      - Dès que l'agent ou l'utilisateur initialise un nouveau dépôt d'application Android, l'agent doit immédiatement vérifier son packaging APK, configurer le workflow GitHub Actions pour produire l'artefact `<AppName>.apk`, et s'assurer qu'il sera instantanément proposé dans `InstallAPK`.
 
+
