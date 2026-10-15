@@ -17,13 +17,62 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.SubcomposeAsyncImage
 import fr.installapk.app.R
 import fr.installapk.app.model.ProjectApp
+
+/**
+ * Composant d'icône d'application réutilisable (Principe de réutilisation : Coil / Now in Android / Obtainium).
+ * Tente de charger l'avatar GitHub / icône distante via Coil avec gestion du cache,
+ * et bascule de manière transparente sur l'emoji local configuré en cas de déconnexion ou d'erreur.
+ */
+@Composable
+fun AppIcon(
+    app: ProjectApp,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp = 46.dp,
+    shape: Shape = RoundedCornerShape(12.dp),
+    containerColor: Color = MaterialTheme.colorScheme.primaryContainer
+) {
+    Surface(
+        shape = shape,
+        color = containerColor,
+        modifier = modifier.size(size)
+    ) {
+        val iconUrl = app.effectiveIconUrl
+        if (iconUrl.isNotBlank()) {
+            SubcomposeAsyncImage(
+                model = iconUrl,
+                contentDescription = app.displayName,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(shape),
+                contentScale = ContentScale.Crop,
+                loading = {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Text(app.iconEmoji, fontSize = (size.value * 0.48f).sp)
+                    }
+                },
+                error = {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Text(app.iconEmoji, fontSize = (size.value * 0.48f).sp)
+                    }
+                }
+            )
+        } else {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                Text(app.iconEmoji, fontSize = (size.value * 0.48f).sp)
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -929,15 +978,12 @@ fun MainScreen(
                             modifier = Modifier.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Surface(
+                            AppIcon(
+                                app = newlyDetectedApp,
+                                size = 44.dp,
                                 shape = RoundedCornerShape(10.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                modifier = Modifier.size(44.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(newlyDetectedApp.iconEmoji, fontSize = 24.sp)
-                                }
-                            }
+                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                            )
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1064,15 +1110,12 @@ fun SelfAppCard(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Surface(
+                AppIcon(
+                    app = app,
+                    size = 46.dp,
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.tertiaryContainer,
-                    modifier = Modifier.size(46.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(app.iconEmoji, fontSize = 22.sp)
-                    }
-                }
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                )
 
                 Spacer(modifier = Modifier.width(12.dp))
 
@@ -1239,15 +1282,12 @@ fun AppCard(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Surface(
+                AppIcon(
+                    app = app,
+                    size = 48.dp,
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(app.iconEmoji, fontSize = 24.sp)
-                    }
-                }
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
 
                 Spacer(modifier = Modifier.width(12.dp))
 

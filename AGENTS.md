@@ -16,7 +16,7 @@
 - **Règle d'apprentissage critique (/learn)** : Signaler systématiquement quand les clés API ou tokens (notamment Personal Access Token GitHub) ne sont plus valides ou arrivent à expiration.
 - **Canaux d'alerte obligatoires** :
   1. **Notification dans l'application** : Bandeau d'alerte rouge proéminent et badge d'avertissement sur l'icône de clé dès que l'API renvoie un code 401 ou que la date d'expiration est dépassée.
-  2. **Notification par email** : Alerte envoyée à l'adresse de référence `contact@installapk.app`.
+  2. **Notification par email** : Alerte envoyée à l'adresse de référence `token.github@alsteens.net`.
   3. **Vérification automatique continue** : Workflow GitHub Actions quotidien (`.github/workflows/check-token.yml`) testant la clé via l'API GitHub (`https://api.github.com/user`) et en-têtes `github-authentication-token-expiration`.
   4. **Diagnostic proactif lors des sessions d'agent** : Toujours vérifier la validité de la clé en amont des opérations critiques et alerter l'utilisateur immédiatement en cas de révocation ou d'expiration imminente.
 
@@ -89,5 +89,17 @@
      - La carte de l'application affiche un badge proéminent « ✨ NOUVEAU » et se positionne en tête de liste pour une visibilité immédiate.
   3. **Prise en charge transverse par l'agent (/learn)** :
      - Dès que l'agent ou l'utilisateur initialise un nouveau dépôt d'application Android, l'agent doit immédiatement vérifier son packaging APK, configurer le workflow GitHub Actions pour produire l'artefact `<AppName>.apk`, et s'assurer qu'il sera instantanément proposé dans `InstallAPK`.
+
+## Règle Architecturale Fondamentale : Le Reuse d'Abord (/learn)
+- **Principe absolu (/learn) : Le reuse (réutilisation) est le premier principe d'architecture pour tous les projets :**
+  1. **Socle UI & Imagerie éprouvé** :
+     - Pour tout chargement d'image ou avatar distant en Jetpack Compose, réutiliser **Coil** (`io.coil-kt:coil-compose`) avec mise en cache automatique, décodage optimisé et composant générique `AppIcon` avec fallback local gracieux (inspiré des standards *Now in Android*, *Compose Samples* et *Obtainium*).
+  2. **CI/CD & Actions GitHub officielles standardisées** :
+     - Toujours réutiliser les versions majeures stables des actions officielles : `actions/checkout@v4`, `actions/setup-java@v4`, `gradle/actions/setup-gradle@v4`, `actions/upload-artifact@v4`.
+     - Standardisation stricte de la compilation, du cache Gradle et du livrable direct `<AppName>.apk` sans compression zip superflue.
+  3. **Patterns Réseau, Données & Cycle de Vie** :
+     - Réseau : OkHttp standardisé avec timeouts et gestion proactive des erreurs d'authentification (401 Bad Credentials).
+     - Persistance : Patterns Room / SharedPreferences unifiés pour le mode *offline-first*.
+     - Systématiser la réutilisation des briques éprouvées d'un projet à l'autre (`InstallAPK`, `Bullix`, `Needix`, `antigravity-controller`).
 
 

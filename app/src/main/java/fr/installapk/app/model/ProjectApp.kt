@@ -8,6 +8,7 @@ data class ProjectApp(
     val displayName: String,        // "Bullix"
     val description: String,
     val iconEmoji: String,          // "📚", "📦", "📲"
+    val iconUrl: String? = null,    // URL d'avatar/icône distante (ex: GitHub repo/owner avatar)
     val isSelf: Boolean = false,    // true pour InstallAPK lui-même
     val artifactPattern: String = "apk",
     val installedVersionCode: Long? = null,
@@ -28,6 +29,9 @@ data class ProjectApp(
     val downloadProgress: Float? = null, // 0.0 to 1.0
     val statusText: String? = null
 ) {
+    val effectiveIconUrl: String
+        get() = iconUrl ?: "https://github.com/${repoOwner}.png"
+
     val isInstalled: Boolean
         get() = !installedVersionName.isNullOrBlank()
 

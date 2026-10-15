@@ -105,6 +105,9 @@ dependencies {
   // Network (HTTP & GitHub API)
   implementation(libs.okhttp)
 
+  // Image Loading (Coil)
+  implementation(libs.coil.compose)
+
   // Test
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
