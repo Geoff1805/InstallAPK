@@ -1085,6 +1085,7 @@ class GitHubAppsRepository(private val context: Context) {
                     val size = bestAsset.optLong("size", 0L)
                     val date = rel.optString("published_at", "")
                     val relTimestamp = parseIsoDateToMillis(date)
+                    val releaseBody = rel.optString("body", "").trim().takeIf { it.isNotBlank() }
                     return app.copy(
                         installedVersionCode = installedCode,
                         installedVersionName = installedName,
@@ -1094,6 +1095,7 @@ class GitHubAppsRepository(private val context: Context) {
                         artifactTimestamp = relTimestamp,
                         downloadUrl = assetUrl,
                         latestVersionName = tagName,
+                        releaseNotes = releaseBody,
                         statusText = "Release disponible"
                     )
                 }

@@ -17,6 +17,12 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 
+enum class AppFilterMode(val label: String) {
+    ALL("Toutes"),
+    UPDATES("Mises à jour"),
+    INSTALLED("Installées")
+}
+
 data class MainUiState(
     val token: String = "",
     val tokenValidation: TokenValidationResult? = null,
@@ -24,6 +30,8 @@ data class MainUiState(
     val alertEmail: String = BuildConfig.ALERT_EMAIL,
     val apps: List<ProjectApp> = emptyList(),
     val newlyDetectedApp: ProjectApp? = null,    // Nouveau dépôt Android détecté à proposer
+    val searchQuery: String = "",
+    val filterMode: AppFilterMode = AppFilterMode.ALL,
     val isLoading: Boolean = false,
     val isUpdatingAll: Boolean = false,
     val updateQueue: List<String> = emptyList(), // IDs des apps dans la file d'attente
@@ -47,6 +55,20 @@ data class MainUiState(
                     .thenByDescending { it.isUpToDate }
                     .thenBy { it.displayName.lowercase() }
             )
+
+    val filteredManagedApps: List<ProjectApp>
+        get() = managedApps.filter { app ->
+            val matchesFilter = when (filterMode) {
+                AppFilterMode.ALL -> true
+                AppFilterMode.UPDATES -> app.hasUpdateAvailable || (!app.isInstalled && app.downloadUrl != null)
+                AppFilterMode.INSTALLED -> app.isInstalled
+            }
+            val matchesQuery = searchQuery.isBlank() ||
+                app.displayName.contains(searchQuery, ignoreCase = true) ||
+                app.packageName.contains(searchQuery, ignoreCase = true) ||
+                app.id.contains(searchQuery, ignoreCase = true)
+            matchesFilter && matchesQuery
+        }
 
     val nextQueueApp: ProjectApp?
         get() {
@@ -96,6 +118,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(token = trimmed) }
         prefs.edit().putString("github_token", trimmed).apply()
         validateCurrentToken()
+    }
+
+    fun setSearchQuery(query: String) {
+        _uiState.update { it.copy(searchQuery = query) }
+    }
+
+    fun setFilterMode(mode: AppFilterMode) {
+        _uiState.update { it.copy(filterMode = mode) }
     }
 
     fun validateCurrentToken() {

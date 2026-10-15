@@ -27,6 +27,7 @@ data class ProjectApp(
     val isUpdating: Boolean = false,
     val isQueued: Boolean = false,
     val downloadProgress: Float? = null, // 0.0 to 1.0
+    val releaseNotes: String? = null,
     val statusText: String? = null
 ) {
     val effectiveIconUrl: String

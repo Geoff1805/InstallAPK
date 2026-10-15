@@ -5,11 +5,13 @@ import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -243,7 +245,7 @@ fun MainScreen(
                                         )
                                     ) {
                                         Icon(
-                                            Icons.Default.ArrowForward,
+                                            Icons.AutoMirrored.Filled.ArrowForward,
                                             contentDescription = null,
                                             modifier = Modifier.size(20.dp)
                                         )
@@ -533,7 +535,7 @@ fun MainScreen(
                                             )
                                         ) {
                                             Icon(
-                                                Icons.Default.ArrowForward,
+                                                Icons.AutoMirrored.Filled.ArrowForward,
                                                 contentDescription = null,
                                                 modifier = Modifier.size(16.dp)
                                             )
@@ -678,7 +680,85 @@ fun MainScreen(
                 }
             }
 
-            items(uiState.managedApps, key = { it.id }) { app ->
+            // Barre de Recherche & Filtres Rapides (Inspiré d'Obtainium et Neo-Store)
+            item {
+                OutlinedTextField(
+                    value = uiState.searchQuery,
+                    onValueChange = { viewModel.setSearchQuery(it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Rechercher une application...", fontSize = 14.sp) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = "Rechercher",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        if (uiState.searchQuery.isNotBlank()) {
+                            IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                                Icon(
+                                    Icons.Default.Clear,
+                                    contentDescription = "Effacer la recherche",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = uiState.filterMode == AppFilterMode.ALL,
+                        onClick = { viewModel.setFilterMode(AppFilterMode.ALL) },
+                        label = { Text("Toutes (${uiState.managedApps.size})", fontSize = 12.sp) }
+                    )
+                    FilterChip(
+                        selected = uiState.filterMode == AppFilterMode.UPDATES,
+                        onClick = { viewModel.setFilterMode(AppFilterMode.UPDATES) },
+                        label = { Text("Mises à jour (${uiState.pendingManagedUpdatesCount})", fontSize = 12.sp) }
+                    )
+                    FilterChip(
+                        selected = uiState.filterMode == AppFilterMode.INSTALLED,
+                        onClick = { viewModel.setFilterMode(AppFilterMode.INSTALLED) },
+                        label = { Text("Installées (${uiState.managedApps.count { it.isInstalled }})", fontSize = 12.sp) }
+                    )
+                }
+            }
+
+            if (uiState.filteredManagedApps.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "Aucune application ne correspond aux critères.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            items(uiState.filteredManagedApps, key = { it.id }) { app ->
                 AppCard(
                     app = app,
                     onInstallOrUpdate = { viewModel.installOrUpdateApp(app) },
@@ -1262,6 +1342,7 @@ fun AppCard(
     val isQueued = app.isQueued
     val isUpdating = app.isUpdating
     val hasNoApkYet = app.downloadUrl == null
+    var showChangelog by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
@@ -1425,8 +1506,48 @@ fun AppCard(
                 }
             }
 
+            // Notes de version / Changelog (Inspiré d'Obtainium)
+            if (!app.releaseNotes.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable { showChangelog = !showChangelog }
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Article,
+                        contentDescription = "Changelog",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (showChangelog) "Masquer les nouveautés" else "Voir les nouveautés (${app.latestVersionName ?: ""})",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                if (showChangelog) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp)
+                    ) {
+                        Text(
+                            text = app.releaseNotes ?: "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(10.dp))
-            Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             Spacer(modifier = Modifier.height(8.dp))
 
             // Ligne de détails et boutons d'action
@@ -1531,7 +1652,7 @@ fun AppCard(
                                 )
                             ) {
                                 Icon(
-                                    Icons.Default.Launch,
+                                    Icons.AutoMirrored.Filled.Launch,
                                     contentDescription = null,
                                     modifier = Modifier.size(16.dp)
                                 )
@@ -1592,7 +1713,7 @@ fun AppCard(
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Icon(
-                                    Icons.Default.Launch,
+                                    Icons.AutoMirrored.Filled.Launch,
                                     contentDescription = null,
                                     modifier = Modifier.size(15.dp)
                                 )
