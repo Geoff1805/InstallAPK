@@ -143,6 +143,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var isReceiverRegistered = false
+
     init {
         registerPackageReceiver()
         validateCurrentToken()
@@ -150,6 +152,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun registerPackageReceiver() {
+        if (isReceiverRegistered) return
         try {
             val filter = IntentFilter().apply {
                 addAction(Intent.ACTION_PACKAGE_ADDED)
@@ -159,9 +162,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             val app = getApplication<Application>()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                app.registerReceiver(packageBroadcastReceiver, filter, Context.RECEIVER_EXPORTED)
+                try {
+                    app.registerReceiver(packageBroadcastReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                    isReceiverRegistered = true
+                } catch (_: Exception) {
+                    try {
+                        app.registerReceiver(packageBroadcastReceiver, filter, Context.RECEIVER_EXPORTED)
+                        isReceiverRegistered = true
+                    } catch (_: Exception) {
+                        app.registerReceiver(packageBroadcastReceiver, filter)
+                        isReceiverRegistered = true
+                    }
+                }
             } else {
                 app.registerReceiver(packageBroadcastReceiver, filter)
+                isReceiverRegistered = true
             }
         } catch (_: Exception) {
         }
@@ -169,9 +184,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        try {
-            getApplication<Application>().unregisterReceiver(packageBroadcastReceiver)
-        } catch (_: Exception) {
+        if (isReceiverRegistered) {
+            try {
+                getApplication<Application>().unregisterReceiver(packageBroadcastReceiver)
+                isReceiverRegistered = false
+            } catch (_: Exception) {
+            }
         }
     }
 

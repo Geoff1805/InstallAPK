@@ -34,6 +34,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.InstallAPK">
 
+        <!-- Désactivation de l'auto-initialisation Sentry (évite IllegalArgumentException au démarrage) -->
+        <meta-data
+            android:name="io.sentry.auto-init"
+            android:value="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -12,7 +12,7 @@ class InstallApkApp : Application() {
 
         NotificationHelper.initChannels(this)
 
-        if (BuildConfig.SENTRY_DSN.isNotBlank()) {
+        if (BuildConfig.SENTRY_DSN.isNotBlank() && BuildConfig.SENTRY_DSN.startsWith("http", ignoreCase = true)) {
             try {
                 SentryAndroid.init(this) { options ->
                     options.dsn = BuildConfig.SENTRY_DSN
