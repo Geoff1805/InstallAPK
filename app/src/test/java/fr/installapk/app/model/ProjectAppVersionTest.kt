@@ -1,9 +1,16 @@
 package fr.installapk.app.model
 
+import fr.installapk.app.data.ArchiveType
+import fr.installapk.app.data.GitHubAppsRepository
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class ProjectAppVersionTest {
 
@@ -40,7 +47,6 @@ class ProjectAppVersionTest {
 
     @Test
     fun testVersionCodeTakesAbsolutePrecedence() {
-        // installed code 1 < latest code 2 -> Mise à jour disponible même si le versionName n'a pas bougé
         val appWithSameName = createApp(
             installedVersionCode = 1L,
             installedVersionName = "1.0.0",
@@ -50,7 +56,6 @@ class ProjectAppVersionTest {
         assertFalse("Quand latestVersionCode > installedVersionCode, l'app ne doit pas être à jour", appWithSameName.isUpToDate)
         assertTrue("Une mise à jour doit être disponible", appWithSameName.hasUpdateAvailable)
 
-        // installed code 2 > latest code 1 -> À jour (version dev plus avancée)
         val appWithHigherCode = createApp(
             installedVersionCode = 2L,
             installedVersionName = "1.0.0",
@@ -63,7 +68,6 @@ class ProjectAppVersionTest {
 
     @Test
     fun testSemanticVersionComparison() {
-        // Sans versionCode ou codes identiques : 1.0.9 vs 1.0.12
         val app1 = createApp(
             installedVersionName = "v1.0.9",
             latestVersionName = "1.0.12"
@@ -71,7 +75,6 @@ class ProjectAppVersionTest {
         assertFalse("1.0.9 < 1.0.12 donc pas à jour", app1.isUpToDate)
         assertTrue("Mise à jour disponible", app1.hasUpdateAvailable)
 
-        // Versions identiques
         val app2 = createApp(
             installedVersionName = "1.0.12",
             latestVersionName = "v1.0.12"
@@ -79,7 +82,6 @@ class ProjectAppVersionTest {
         assertTrue("1.0.12 == v1.0.12 donc à jour", app2.isUpToDate)
         assertFalse(app2.hasUpdateAvailable)
 
-        // Version locale plus récente
         val app3 = createApp(
             installedVersionName = "1.2.0",
             latestVersionName = "1.0.12"
@@ -90,10 +92,9 @@ class ProjectAppVersionTest {
     @Test
     fun testTimestampComparisonForSameVersionBuilds() {
         val installTime = 1_000_000L
-        val newerBuildTime = 2_000_000L // Build CI généré après l'installation
+        val newerBuildTime = 2_000_000L
         val olderBuildTime = 500_000L
 
-        // Même version code et name, mais build plus récent sur GitHub Actions
         val appNewBuild = createApp(
             installedVersionCode = 10L,
             installedVersionName = "1.0.0",
@@ -105,7 +106,6 @@ class ProjectAppVersionTest {
         assertFalse("Un artefact CI plus récent doit déclencher la mise à jour disponible", appNewBuild.isUpToDate)
         assertTrue(appNewBuild.hasUpdateAvailable)
 
-        // Même version et build plus ancien que l'installation locale
         val appOldBuild = createApp(
             installedVersionCode = 10L,
             installedVersionName = "1.0.0",
@@ -119,7 +119,6 @@ class ProjectAppVersionTest {
 
     @Test
     fun testRunNumberDoesNotCorruptSemanticComparison() {
-        // Si latestVersionName est "Run #45" et installedVersionName "1.0.0"
         val cleanRun = ProjectApp.cleanVersion("Run #45")
         assertEquals("Run #45", cleanRun)
         assertFalse("Run #45 ne doit pas être considéré comme une version sémantique valide", ProjectApp.isSemanticVersion(cleanRun))
@@ -127,14 +126,11 @@ class ProjectAppVersionTest {
 
     @Test
     fun testSemanticVersionTakesPrecedenceOverBogusVersionCode() {
-        // Scénario réel Bullix : le code installé est 1118 (généré par la CI 1000 + run),
-        // mais le repo git a un versionCode statique de 1.
-        // La nouvelle version disponible est 1.0.119 (supérieure à 1.0.118).
         val app = createApp(
             installedVersionCode = 1118L,
             installedVersionName = "1.0.118",
-            latestVersionCode = 1L, // Bogus/statique depuis version.properties
-            latestVersionName = "1.0.119" // Tag officiel de release
+            latestVersionCode = 1L,
+            latestVersionName = "1.0.119"
         )
         assertFalse("1.0.118 < 1.0.119 donc mise à jour REQUISE malgré le code statique", app.isUpToDate)
         assertTrue("Une mise à jour doit être détectée", app.hasUpdateAvailable)
@@ -150,17 +146,93 @@ class ProjectAppVersionTest {
     }
 
     @Test
-    fun testSameArtifactIdConfirmedIsUpToDate() {
+    fun testSameArtifactIdConfirmedIsUpToDateEvenWhenTagDiffersFromApkManifest() {
+        // Cas critique corrigé : le tag GitHub Release est "v1.0.45", mais l'APK compilé avait versionName="1.0.0".
+        // Puisque latestArtifactId == lastInstalledArtifactId (cet APK précis a déjà été installé),
+        // l'application ne doit PLUS reproposer la même mise à jour en boucle !
         val app = createApp(
-            installedVersionCode = 10L,
-            installedVersionName = "0.6.4",
-            latestVersionCode = 10L,
-            latestVersionName = "0.6.4",
+            installedVersionCode = 1L,
+            installedVersionName = "1.0.0",
+            latestVersionCode = 1L,
+            latestVersionName = "v1.0.45",
             latestArtifactId = 9999L,
             lastInstalledArtifactId = 9999L
         )
-        assertTrue("Même ID d'artefact déjà installé -> À jour", app.isUpToDate)
+        assertTrue("Même ID d'artefact déjà installé -> Doit être considéré À jour malgré la différence de tag", app.isUpToDate)
+        assertFalse("Ne doit pas reproposer la même mise à jour", app.hasUpdateAvailable)
+    }
+
+    @Test
+    fun testInstalledAfterBuildTimestampIsUpToDateEvenWhenTagDiffers() {
+        // L'APK a été installé sur le téléphone à t=2_000_000 alors que la Release GitHub a été publiée à t=1_000_000
+        val app = createApp(
+            installedVersionCode = 1L,
+            installedVersionName = "1.0.0",
+            latestVersionCode = 1L,
+            latestVersionName = "v1.0.45",
+            installedUpdateTime = 2_000_000L,
+            artifactTimestamp = 1_000_000L
+        )
+        assertTrue("Installé après la date du build GitHub -> À jour", app.isUpToDate)
         assertFalse(app.hasUpdateAvailable)
+    }
+
+    @Test
+    fun testInspectDownloadedArchiveDistinguishesDirectApkFromActionZip() {
+        val tempDirectApk = File.createTempFile("test_direct", ".apk")
+        val tempZipContainer = File.createTempFile("test_container", ".zip")
+        val tempExtractedApk = File.createTempFile("test_extracted", ".apk")
+
+        try {
+            // 1. Créer un vrai fichier structurellement APK (ZIP contenant AndroidManifest.xml et classes.dex)
+            ZipOutputStream(FileOutputStream(tempDirectApk)).use { zos ->
+                zos.putNextEntry(ZipEntry("AndroidManifest.xml"))
+                zos.write("manifest-binary-data".toByteArray())
+                zos.closeEntry()
+                zos.putNextEntry(ZipEntry("classes.dex"))
+                zos.write("dex-binary-data".toByteArray())
+                zos.closeEntry()
+            }
+
+            assertEquals(
+                "Un fichier .apk contenant AndroidManifest.xml doit être reconnu comme DIRECT_APK et non décompressé",
+                ArchiveType.DIRECT_APK,
+                GitHubAppsRepository.inspectDownloadedArchive(tempDirectApk)
+            )
+
+            // 2. Créer un conteneur ZIP GitHub Actions contenant un fichier Bullix.apk
+            val nestedApkBytes = ByteArrayOutputStream().also { baos ->
+                ZipOutputStream(baos).use { zos ->
+                    zos.putNextEntry(ZipEntry("AndroidManifest.xml"))
+                    zos.write("inner-manifest".toByteArray())
+                    zos.closeEntry()
+                }
+            }.toByteArray()
+
+            ZipOutputStream(FileOutputStream(tempZipContainer)).use { zos ->
+                zos.putNextEntry(ZipEntry("Bullix.apk"))
+                zos.write(nestedApkBytes)
+                zos.closeEntry()
+            }
+
+            assertEquals(
+                "Une archive ZIP contenant Bullix.apk doit être reconnue comme ZIP_CONTAINING_APK",
+                ArchiveType.ZIP_CONTAINING_APK,
+                GitHubAppsRepository.inspectDownloadedArchive(tempZipContainer)
+            )
+
+            val extractedOk = GitHubAppsRepository.extractApkFromZipContainer(tempZipContainer, tempExtractedApk)
+            assertTrue("L'extraction du .apk depuis le conteneur ZIP doit réussir", extractedOk)
+            assertEquals(
+                "Le fichier extrait doit lui-même être reconnu comme DIRECT_APK",
+                ArchiveType.DIRECT_APK,
+                GitHubAppsRepository.inspectDownloadedArchive(tempExtractedApk)
+            )
+        } finally {
+            tempDirectApk.delete()
+            tempZipContainer.delete()
+            tempExtractedApk.delete()
+        }
     }
 
     @Test

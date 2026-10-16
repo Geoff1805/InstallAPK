@@ -3,6 +3,12 @@ import java.util.Properties
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
+  alias(libs.plugins.ktlint)
+}
+
+ktlint {
+  android.set(true)
+  ignoreFailures.set(true)
 }
 
 android {
@@ -23,6 +29,10 @@ android {
     ?: System.getenv("DEFAULT_GITHUB_TOKEN")
     ?: ""
 
+  val sentryDsn = (project.findProperty("SENTRY_DSN") as? String)
+    ?: System.getenv("SENTRY_DSN")
+    ?: ""
+
   defaultConfig {
     applicationId = "fr.installapk.app"
     minSdk = 24
@@ -31,7 +41,8 @@ android {
     versionName = appVersionName
 
     buildConfigField("String", "DEFAULT_GITHUB_TOKEN", "\"$defaultToken\"")
-    buildConfigField("String", "ALERT_EMAIL", "\"\"")
+    buildConfigField("String", "ALERT_EMAIL", "\"token.github@alsteens.net\"")
+    buildConfigField("String", "SENTRY_DSN", "\"$sentryDsn\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -65,7 +76,8 @@ android {
       signingConfig = signingConfigs.getByName("debug")
     }
     release {
-      isMinifyEnabled = false
+      isMinifyEnabled = true
+      isShrinkResources = true
       signingConfig = signingConfigs.getByName("release")
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
@@ -74,6 +86,10 @@ android {
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
+  }
+
+  testOptions {
+    unitTests.isReturnDefaultValues = true
   }
 
   buildFeatures {
@@ -107,6 +123,11 @@ dependencies {
 
   // Image Loading (Coil)
   implementation(libs.coil.compose)
+
+  // Observability & Debug Network Inspection (STACK_LIBRARY.md § 2.D)
+  implementation(libs.sentry.android)
+  debugImplementation(libs.chucker.debug)
+  releaseImplementation(libs.chucker.noop)
 
   // Test
   testImplementation(libs.junit)

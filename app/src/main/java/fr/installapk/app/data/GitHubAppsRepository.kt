@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Base64
 import android.util.Log
+import com.chuckerteam.chucker.api.ChuckerInterceptor
 import fr.installapk.app.model.ProjectApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,6 +20,12 @@ import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 
+enum class ArchiveType {
+    DIRECT_APK,
+    ZIP_CONTAINING_APK,
+    INVALID
+}
+
 class GitHubAppsRepository(private val context: Context) {
 
     private val tag = "GitHubAppsRepository"
@@ -29,6 +36,7 @@ class GitHubAppsRepository(private val context: Context) {
         .readTimeout(180, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
+        .addInterceptor(ChuckerInterceptor.Builder(context).build())
         .build()
 
     private val defaultProjects = listOf(
@@ -51,6 +59,16 @@ class GitHubAppsRepository(private val context: Context) {
             description = "Gestionnaire intelligent d'inventaire et courses du foyer",
             iconEmoji = "📦",
             artifactPattern = "Needix.apk"
+        ),
+        ProjectApp(
+            id = "AppliHome",
+            repoOwner = "Geoff1805",
+            repoName = "AppliHome",
+            packageName = "com.geoff.applihome",
+            displayName = "AppliHome",
+            description = "Dashboard domotique résidentiel Matter & Google Home Offline-First",
+            iconEmoji = "🏠",
+            artifactPattern = "AppliHome.apk"
         ),
         ProjectApp(
             id = "InstallAPK",
@@ -711,14 +729,15 @@ class GitHubAppsRepository(private val context: Context) {
 
     suspend fun fetchLatestAppInfo(app: ProjectApp, token: String): ProjectApp = withContext(Dispatchers.IO) {
         try {
-            val defaultApp = defaultProjects.firstOrNull { it.id.equals(app.id, ignoreCase = true) }
-            var effectivePkg = defaultApp?.packageName ?: prefs.getString("pkg_${app.id}", null) ?: app.packageName
+            val refreshedBase = refreshSingleAppInstalledStatus(app)
+            val defaultApp = defaultProjects.firstOrNull { it.id.equals(refreshedBase.id, ignoreCase = true) }
+            var effectivePkg = defaultApp?.packageName ?: prefs.getString("pkg_${refreshedBase.id}", null) ?: refreshedBase.packageName
             var installed = getInstalledPackageInfo(effectivePkg)
             if (installed == null) {
-                val foundPkg = findInstalledPackageForApp(app)
+                val foundPkg = findInstalledPackageForApp(refreshedBase)
                 if (foundPkg != null) {
                     effectivePkg = foundPkg.packageName
-                    prefs.edit().putString("pkg_${app.id}", effectivePkg).apply()
+                    prefs.edit().putString("pkg_${refreshedBase.id}", effectivePkg).apply()
                     installed = foundPkg
                 }
             }
@@ -733,10 +752,10 @@ class GitHubAppsRepository(private val context: Context) {
             } else null
             val vName = installed?.versionName
             val effectiveInstalledTime = installed?.lastUpdateTime
-            val lastInstalledArtId = prefs.getLong("installed_artifact_id_${app.id}", -1L).takeIf { it != -1L }
+            var lastInstalledArtId = prefs.getLong("installed_artifact_id_${app.id}", -1L).takeIf { it != -1L }
 
             // 1. Consulter les Releases GitHub (APK directs prêts à installer et tags officiels)
-            val releaseApp = fetchLatestReleaseAppInfo(app, token, vCode, vName, effectiveInstalledTime)
+            val releaseApp = fetchLatestReleaseAppInfo(refreshedBase, token, vCode, vName, effectiveInstalledTime)
 
             // 2. Consulter les Artefacts GitHub Actions
             val url = "https://api.github.com/repos/${app.repoOwner}/${app.repoName}/actions/artifacts?per_page=100"
@@ -806,8 +825,6 @@ class GitHubAppsRepository(private val context: Context) {
             }
 
             val remoteVersion = fetchRemoteVersionInfo(app.repoOwner, app.repoName, token)
-            val cachedApkCode = prefs.getLong("apk_vcode_${app.id}", -1L).takeIf { it != -1L }
-            val cachedApkName = prefs.getString("apk_vname_${app.id}", null)
 
             // 3. Synthèse et arbitrage entre Release et Artefact Actions
             val releaseTimestamp = releaseApp?.artifactTimestamp ?: 0L
@@ -835,14 +852,31 @@ class GitHubAppsRepository(private val context: Context) {
             val artTs = artifactTimestamp ?: 0L
 
             if (releaseApp != null && (matchedArtifact == null || releaseTimestamp >= (artTs - 300_000L))) {
-                // Priorité à la Release : APK direct sans décompression ZIP, tag sémantique garanti
-                val resolvedLatestCode = when {
-                    runNumber != null && vCode != null && vCode >= 1000L -> maxOf(remoteVersion.first ?: 0L, 1000L + runNumber)
-                    remoteVersion.first != null -> remoteVersion.first
-                    cachedApkCode != null -> cachedApkCode
-                    runNumber != null -> runNumber
-                    else -> null
+                // Priorité à la Release : APK direct sans décompression ZIP
+                val effectiveArtId = releaseApp.latestArtifactId ?: artId
+                if (effectiveArtId != null) {
+                    prefs.edit().putLong("latest_known_art_id_${app.id}", effectiveArtId).apply()
                 }
+                val cachedApkCodeForArt = effectiveArtId?.let {
+                    prefs.getLong("apk_vcode_${app.id}_$it", -1L).takeIf { c -> c > 0L }
+                }
+                val cachedApkNameForArt = effectiveArtId?.let {
+                    prefs.getString("apk_vname_${app.id}_$it", null)
+                }
+
+                // Si le téléphone a été mis à jour après la publication de la release ou possède déjà le code APK extrait de cet asset
+                if (installed != null && effectiveArtId != null) {
+                    val matchesInspectedApk = cachedApkCodeForArt != null && vCode == cachedApkCodeForArt &&
+                        (cachedApkNameForArt == null || vName == cachedApkNameForArt)
+                    val installedAfterBuild = effectiveInstalledTime != null && releaseTimestamp > 0L &&
+                        effectiveInstalledTime >= (releaseTimestamp - 30_000L)
+                    if (matchesInspectedApk || installedAfterBuild) {
+                        lastInstalledArtId = effectiveArtId
+                        prefs.edit().putLong("installed_artifact_id_${app.id}", effectiveArtId).apply()
+                    }
+                }
+
+                val resolvedLatestCode = cachedApkCodeForArt ?: remoteVersion.first
 
                 releaseApp.copy(
                     packageName = effectivePkg,
@@ -850,28 +884,51 @@ class GitHubAppsRepository(private val context: Context) {
                     installedVersionName = vName,
                     installedUpdateTime = effectiveInstalledTime,
                     latestVersionCode = resolvedLatestCode,
-                    latestArtifactId = artId ?: releaseApp.latestArtifactId,
-                    lastInstalledArtifactId = lastInstalledArtId ?: app.lastInstalledArtifactId,
+                    latestArtifactId = effectiveArtId,
+                    lastInstalledArtifactId = lastInstalledArtId ?: refreshedBase.lastInstalledArtifactId,
+                    isDirectApk = true,
                     statusText = "Prêt"
                 )
             } else if (matchedArtifact != null && archiveUrl != null) {
-                // Priorité à l'artefact GitHub Actions (ex: Needix, ou commit main récent sans release)
-                val resolvedLatestCode = maxOf(remoteVersion.first ?: 0L, cachedApkCode ?: 0L).takeIf { it > 0L } ?: runNumber
+                // Priorité à l'artefact GitHub Actions
+                if (artId != null) {
+                    prefs.edit().putLong("latest_known_art_id_${app.id}", artId).apply()
+                }
+                val cachedApkCodeForArt = artId?.let {
+                    prefs.getLong("apk_vcode_${app.id}_$it", -1L).takeIf { c -> c > 0L }
+                }
+                val cachedApkNameForArt = artId?.let {
+                    prefs.getString("apk_vname_${app.id}_$it", null)
+                }
+
+                if (installed != null && artId != null) {
+                    val matchesInspectedApk = cachedApkCodeForArt != null && vCode == cachedApkCodeForArt &&
+                        (cachedApkNameForArt == null || vName == cachedApkNameForArt)
+                    val installedAfterBuild = effectiveInstalledTime != null && artTs > 0L &&
+                        effectiveInstalledTime >= (artTs - 30_000L)
+                    if (matchesInspectedApk || installedAfterBuild) {
+                        lastInstalledArtId = artId
+                        prefs.edit().putLong("installed_artifact_id_${app.id}", artId).apply()
+                    }
+                }
+
+                // Ne jamais utiliser runNumber comme versionCode Android !
+                val resolvedLatestCode = cachedApkCodeForArt ?: remoteVersion.first
                 val resolvedLatestName = when {
+                    cachedApkNameForArt != null -> ProjectApp.cleanVersion(cachedApkNameForArt)
                     remoteVersion.second != null && !remoteVersion.second.equals("1.0.0", ignoreCase = true) -> ProjectApp.cleanVersion(remoteVersion.second)
                     runNumber != null -> "Run #$runNumber"
                     remoteVersion.second != null -> ProjectApp.cleanVersion(remoteVersion.second)
-                    cachedApkName != null -> ProjectApp.cleanVersion(cachedApkName)
                     else -> "Run #${artId ?: 0}"
                 }
 
-                app.copy(
+                refreshedBase.copy(
                     packageName = effectivePkg,
                     installedVersionCode = vCode,
                     installedVersionName = vName,
                     installedUpdateTime = effectiveInstalledTime,
                     latestArtifactId = artId,
-                    lastInstalledArtifactId = lastInstalledArtId ?: app.lastInstalledArtifactId,
+                    lastInstalledArtifactId = lastInstalledArtId ?: refreshedBase.lastInstalledArtifactId,
                     latestArtifactSize = artSize,
                     latestArtifactDate = artDate,
                     artifactTimestamp = artifactTimestamp,
@@ -884,7 +941,7 @@ class GitHubAppsRepository(private val context: Context) {
             } else if (releaseApp != null) {
                 releaseApp
             } else {
-                app.copy(
+                refreshedBase.copy(
                     packageName = effectivePkg,
                     installedVersionCode = vCode,
                     installedVersionName = vName,
@@ -899,8 +956,9 @@ class GitHubAppsRepository(private val context: Context) {
 
     fun recordAppInstallationInitiated(appId: String, artifactId: Long?, apkFile: File? = null) {
         val editor = prefs.edit()
-        if (artifactId != null) {
-            editor.putLong("pending_art_id_$appId", artifactId)
+        val effectiveArtId = artifactId ?: prefs.getLong("latest_known_art_id_$appId", -1L).takeIf { it != -1L }
+        if (effectiveArtId != null) {
+            editor.putLong("pending_art_id_$appId", effectiveArtId)
         }
         editor.putLong("pending_install_time_$appId", System.currentTimeMillis())
 
@@ -914,14 +972,55 @@ class GitHubAppsRepository(private val context: Context) {
                         @Suppress("DEPRECATION")
                         archiveInfo.versionCode.toLong()
                     }
+                    if (!archiveInfo.packageName.isNullOrBlank()) {
+                        editor.putString("pkg_$appId", archiveInfo.packageName)
+                    }
                     editor.putLong("pending_vcode_$appId", vCode)
                     if (!archiveInfo.versionName.isNullOrBlank()) {
                         editor.putString("pending_vname_$appId", archiveInfo.versionName)
+                    }
+                    if (effectiveArtId != null) {
+                        editor.putLong("apk_vcode_${appId}_$effectiveArtId", vCode)
+                        if (!archiveInfo.versionName.isNullOrBlank()) {
+                            editor.putString("apk_vname_${appId}_$effectiveArtId", archiveInfo.versionName)
+                        }
                     }
                 }
             } catch (_: Exception) {}
         }
         editor.apply()
+    }
+
+    /**
+     * Appelé immédiatement lorsqu'Android diffuse ACTION_PACKAGE_ADDED ou ACTION_PACKAGE_REPLACED.
+     * Confirme l'installation de l'artefact en attente et retourne l'identifiant de l'application correspondante.
+     */
+    fun confirmPackageInstalledByBroadcast(installedPackageName: String, currentApps: List<ProjectApp>): String? {
+        if (installedPackageName.isBlank()) return null
+        val matchedApp = currentApps.firstOrNull { app ->
+            val savedPkg = prefs.getString("pkg_${app.id}", null)
+            app.packageName.equals(installedPackageName, ignoreCase = true) ||
+                (savedPkg != null && savedPkg.equals(installedPackageName, ignoreCase = true))
+        } ?: defaultProjects.firstOrNull { it.packageName.equals(installedPackageName, ignoreCase = true) }
+
+        val appId = matchedApp?.id ?: return null
+        val pendingArtId = prefs.getLong("pending_art_id_$appId", -1L).takeIf { it != -1L }
+            ?: matchedApp.latestArtifactId
+            ?: prefs.getLong("latest_known_art_id_$appId", -1L).takeIf { it != -1L }
+
+        prefs.edit().apply {
+            putString("pkg_$appId", installedPackageName)
+            if (pendingArtId != null) {
+                putLong("installed_artifact_id_$appId", pendingArtId)
+            }
+            putLong("installed_timestamp_$appId", System.currentTimeMillis())
+            remove("pending_art_id_$appId")
+            remove("pending_vcode_$appId")
+            remove("pending_vname_$appId")
+            remove("pending_install_time_$appId")
+        }.apply()
+
+        return appId
     }
 
     private fun parseIsoDateToMillis(dateStr: String): Long? {
@@ -999,8 +1098,8 @@ class GitHubAppsRepository(private val context: Context) {
             }
         } catch (_: Exception) {}
 
-        // 3. Tenter app/build.gradle.kts ou app/build.gradle
-        for (gradlePath in listOf("app/build.gradle.kts", "app/build.gradle")) {
+        // 3. Tenter app/build.gradle.kts, composeApp/build.gradle.kts ou app/build.gradle
+        for (gradlePath in listOf("app/build.gradle.kts", "composeApp/build.gradle.kts", "app/build.gradle")) {
             try {
                 val url = "https://api.github.com/repos/$owner/$repo/contents/$gradlePath"
                 val reqBuilder = Request.Builder()
@@ -1079,21 +1178,24 @@ class GitHubAppsRepository(private val context: Context) {
                 }
 
                 if (bestAsset != null) {
+                    val assetId = bestAsset.optLong("id", -1L).takeIf { it > 0L }
                     val assetUrl = bestAsset.optString("url", "").takeIf { it.isNotBlank() }
                         ?: bestAsset.getString("browser_download_url")
                     val tagName = rel.optString("tag_name", "Release")
                     val size = bestAsset.optLong("size", 0L)
-                    val date = rel.optString("published_at", "")
+                    val date = bestAsset.optString("updated_at", "").ifBlank { rel.optString("published_at", "") }
                     val relTimestamp = parseIsoDateToMillis(date)
                     val releaseBody = rel.optString("body", "").trim().takeIf { it.isNotBlank() }
                     return app.copy(
                         installedVersionCode = installedCode,
                         installedVersionName = installedName,
                         installedUpdateTime = installedTime,
+                        latestArtifactId = assetId,
                         latestArtifactSize = size,
                         latestArtifactDate = date,
                         artifactTimestamp = relTimestamp,
                         downloadUrl = assetUrl,
+                        isDirectApk = true,
                         latestVersionName = tagName,
                         releaseNotes = releaseBody,
                         statusText = "Release disponible"
@@ -1181,8 +1283,8 @@ class GitHubAppsRepository(private val context: Context) {
             fos.close()
             inputStream.close()
 
-            if (tempDownloadFile.length() < 100_000L) {
-                Log.w(tag, "Fichier téléchargé suspect car trop petit (${tempDownloadFile.length()} octets) pour ${app.id}")
+            if (tempDownloadFile.length() < 50_000L) {
+                Log.w(tag, "Fichier téléchargé trop petit (${tempDownloadFile.length()} octets) pour ${app.id}")
             }
 
             val updatesDir = File(context.filesDir, "updates")
@@ -1191,41 +1293,28 @@ class GitHubAppsRepository(private val context: Context) {
             val destinationApk = File(updatesDir, "${app.id}.apk")
             if (destinationApk.exists()) destinationApk.delete()
 
-            // Vérifier si le fichier téléchargé est un ZIP ou directement un APK
-            val isZip = isZipFile(tempDownloadFile)
-            if (isZip) {
-                // Dézipper et extraire le fichier .apk contenu
-                val zis = ZipInputStream(tempDownloadFile.inputStream())
-                var zipEntry = zis.nextEntry
-                var foundApk = false
-
-                while (zipEntry != null) {
-                    if (!zipEntry.isDirectory && zipEntry.name.endsWith(".apk", ignoreCase = true)) {
-                        val apkFos = FileOutputStream(destinationApk)
-                        val apkBuffer = ByteArray(8192)
-                        var count: Int
-                        while (zis.read(apkBuffer).also { count = it } != -1) {
-                            apkFos.write(apkBuffer, 0, count)
-                        }
-                        apkFos.flush()
-                        apkFos.close()
-                        foundApk = true
-                        Log.i(tag, "APK extrait du zip avec succès: ${zipEntry.name} (${destinationApk.length()} octets)")
-                        break
-                    }
-                    zipEntry = zis.nextEntry
+            // Déterminer si le fichier téléchargé est directement un APK Android ou un conteneur ZIP d'artefact Actions
+            val archiveType = classifyArchiveFile(tempDownloadFile)
+            when (archiveType) {
+                ArchiveType.DIRECT_APK -> {
+                    tempDownloadFile.copyTo(destinationApk, overwrite = true)
+                    tempDownloadFile.delete()
+                    Log.i(tag, "APK direct prêt à installer pour ${app.id} (${destinationApk.length()} octets)")
                 }
-                zis.close()
-                tempDownloadFile.delete()
-
-                if (!foundApk || !destinationApk.exists() || destinationApk.length() == 0L) {
-                    Log.e(tag, "Aucun fichier .apk trouvé dans l'archive zip téléchargée pour ${app.id}")
+                ArchiveType.ZIP_CONTAINING_APK -> {
+                    val extracted = extractApkFromZipContainer(tempDownloadFile, destinationApk)
+                    tempDownloadFile.delete()
+                    if (!extracted || !destinationApk.exists() || destinationApk.length() == 0L) {
+                        Log.e(tag, "Échec d'extraction du .apk depuis le conteneur ZIP pour ${app.id}")
+                        return@withContext null
+                    }
+                    Log.i(tag, "APK extrait du conteneur ZIP avec succès pour ${app.id} (${destinationApk.length()} octets)")
+                }
+                ArchiveType.INVALID -> {
+                    Log.e(tag, "Le fichier téléchargé pour ${app.id} n'est ni un APK ni un ZIP contenant un APK")
+                    tempDownloadFile.delete()
                     return@withContext null
                 }
-            } else {
-                // Le fichier téléchargé est déjà directement un APK
-                tempDownloadFile.copyTo(destinationApk, overwrite = true)
-                tempDownloadFile.delete()
             }
 
             // Inspecter l'APK pour découvrir / confirmer le vrai packageName, versionCode et versionName
@@ -1247,6 +1336,12 @@ class GitHubAppsRepository(private val context: Context) {
                         }
                         putLong("apk_vcode_${app.id}", apkCode)
                         if (!apkName.isNullOrBlank()) putString("apk_vname_${app.id}", apkName)
+                        if (app.latestArtifactId != null) {
+                            putLong("apk_vcode_${app.id}_${app.latestArtifactId}", apkCode)
+                            if (!apkName.isNullOrBlank()) {
+                                putString("apk_vname_${app.id}_${app.latestArtifactId}", apkName)
+                            }
+                        }
                     }.apply()
                     Log.i(tag, "APK inspecté pour ${app.id}: pkg=$realPkg, code=$apkCode, name=$apkName")
                 }
@@ -1261,16 +1356,18 @@ class GitHubAppsRepository(private val context: Context) {
         }
     }
 
-    private fun isZipFile(file: File): Boolean {
-        if (!file.exists() || file.length() < 4) return false
+    private fun classifyArchiveFile(file: File): ArchiveType {
+        // 1. Vérification structurelle pure ZIP/APK (AndroidManifest.xml vs *.apk imbriqué)
+        val structuralType = inspectDownloadedArchive(file)
+        if (structuralType != ArchiveType.INVALID) {
+            return structuralType
+        }
+        // 2. Fallback via PackageManager Android
         return try {
-            val fis = FileInputStream(file)
-            val header = ByteArray(4)
-            val read = fis.read(header)
-            fis.close()
-            read == 4 && header[0] == 0x50.toByte() && header[1] == 0x4B.toByte()
+            val info = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+            if (info != null) ArchiveType.DIRECT_APK else ArchiveType.INVALID
         } catch (_: Exception) {
-            false
+            ArchiveType.INVALID
         }
     }
 
@@ -1296,6 +1393,81 @@ class GitHubAppsRepository(private val context: Context) {
             }
         } catch (_: Exception) {
             app
+        }
+    }
+
+    companion object {
+        /**
+         * Inspecte la structure interne d'un fichier téléchargé pour distinguer :
+         * - Un fichier .apk direct (archive ZIP contenant AndroidManifest.xml ou classes.dex à la racine)
+         * - Un conteneur .zip GitHub Actions (archive ZIP contenant un fichier *.apk)
+         * - Un fichier invalide ou corrompu
+         */
+        fun inspectDownloadedArchive(file: File): ArchiveType {
+            if (!file.exists() || file.length() < 4) return ArchiveType.INVALID
+            return try {
+                val fis = FileInputStream(file)
+                val header = ByteArray(4)
+                val read = fis.read(header)
+                fis.close()
+                val isZipMagic = read == 4 && header[0] == 0x50.toByte() && header[1] == 0x4B.toByte()
+                if (!isZipMagic) return ArchiveType.INVALID
+
+                var hasManifestOrDex = false
+                var hasNestedApk = false
+
+                ZipInputStream(FileInputStream(file)).use { zis ->
+                    var entry = zis.nextEntry
+                    while (entry != null) {
+                        val name = entry.name
+                        if (!entry.isDirectory) {
+                            if (name == "AndroidManifest.xml" || name == "classes.dex" || name == "resources.arsc") {
+                                hasManifestOrDex = true
+                                break
+                            }
+                            if (name.endsWith(".apk", ignoreCase = true)) {
+                                hasNestedApk = true
+                            }
+                        }
+                        entry = zis.nextEntry
+                    }
+                }
+
+                when {
+                    hasManifestOrDex -> ArchiveType.DIRECT_APK
+                    hasNestedApk -> ArchiveType.ZIP_CONTAINING_APK
+                    else -> ArchiveType.INVALID
+                }
+            } catch (_: Exception) {
+                ArchiveType.INVALID
+            }
+        }
+
+        fun extractApkFromZipContainer(zipFile: File, destinationApk: File): Boolean {
+            return try {
+                var foundApk = false
+                ZipInputStream(FileInputStream(zipFile)).use { zis ->
+                    var zipEntry = zis.nextEntry
+                    while (zipEntry != null) {
+                        if (!zipEntry.isDirectory && zipEntry.name.endsWith(".apk", ignoreCase = true)) {
+                            FileOutputStream(destinationApk).use { apkFos ->
+                                val apkBuffer = ByteArray(8192)
+                                var count: Int
+                                while (zis.read(apkBuffer).also { count = it } != -1) {
+                                    apkFos.write(apkBuffer, 0, count)
+                                }
+                                apkFos.flush()
+                            }
+                            foundApk = true
+                            break
+                        }
+                        zipEntry = zis.nextEntry
+                    }
+                }
+                foundApk && destinationApk.exists() && destinationApk.length() > 0L
+            } catch (_: Exception) {
+                false
+            }
         }
     }
 }

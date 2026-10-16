@@ -449,7 +449,7 @@ fun MainScreen(
                         shape = RoundedCornerShape(16.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(12.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
@@ -464,14 +464,20 @@ fun MainScreen(
                                     fontWeight = FontWeight.SemiBold,
                                     style = MaterialTheme.typography.bodyMedium
                                 )
-                                if (!validation.expirationDate.isNullOrBlank()) {
-                                    Text(
-                                        "Expiration : ${validation.expirationDate}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                                Text(
+                                    if (uiState.autoUpdateOnLaunch) {
+                                        "MAJ auto au lancement : Activée"
+                                    } else {
+                                        "MAJ auto au lancement : Désactivée"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
+                            Switch(
+                                checked = uiState.autoUpdateOnLaunch,
+                                onCheckedChange = { viewModel.setAutoUpdateOnLaunch(it) }
+                            )
                         }
                     }
                 }
@@ -902,6 +908,49 @@ fun MainScreen(
             dismissButton = {
                 TextButton(onClick = { appToUninstall = null }) {
                     Text("Annuler")
+                }
+            }
+        )
+    }
+
+    // Dialogue de résolution automatique de conflit de signature APK (INSTALL_FAILED_UPDATE_INCOMPATIBLE)
+    if (uiState.signatureConflictApp != null) {
+        val conflictApp = uiState.signatureConflictApp!!
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissSignatureConflict() },
+            icon = {
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = { Text("Signature différente : ${conflictApp.displayName}") },
+            text = {
+                Column {
+                    Text(
+                        "La version actuellement installée sur votre téléphone a été signée avec une clé différente de celle du nouveau build GitHub.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Android bloque la mise à jour directe dans ce cas. Voulez-vous désinstaller l'ancienne version puis lancer automatiquement l'installation de la nouvelle version ?",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.resolveSignatureConflictByUninstalling(conflictApp) }
+                ) {
+                    Text("Désinstaller puis Installer")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissSignatureConflict() }) {
+                    Text("Passer")
                 }
             }
         )

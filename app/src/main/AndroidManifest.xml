@@ -5,16 +5,20 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
-    <!-- Query packages pour verifier les versions des applis installees sur Android 11+ -->
+    <!-- Query packages pour verifier les versions des applis installees sur Android 11–16 -->
     <queries>
         <package android:name="fr.bullix.app" />
         <package android:name="com.aistudio.inventory.hmtst" />
         <package android:name="fr.installapk.app" />
+        <package android:name="com.geoff.applihome" />
         <package android:name="com.antigravity.antigravity_controller" />
+        <package android:name="com.antigravity.mobile" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
