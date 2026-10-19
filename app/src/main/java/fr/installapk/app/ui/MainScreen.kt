@@ -1740,7 +1740,7 @@ fun AppCard(
                         hasUpdate -> {
                             Button(
                                 onClick = onInstallOrUpdate,
-                                enabled = app.downloadUrl != null,
+                                enabled = app.downloadUrl.isNullOrBlank().not(),
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primary
@@ -1787,7 +1787,7 @@ fun AppCard(
                         !isInstalled -> {
                             Button(
                                 onClick = onInstallOrUpdate,
-                                enabled = app.downloadUrl != null,
+                                enabled = app.downloadUrl.isNullOrBlank().not(),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Icon(
