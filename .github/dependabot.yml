@@ -1,28 +1,25 @@
 version: 2
 updates:
+  # Maintien à jour des dépendances et plugins Gradle (libs.versions.toml)
   - package-ecosystem: "gradle"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
       timezone: "Europe/Paris"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
-    groups:
-      minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
+
+  # Maintien à jour des GitHub Actions utilisées dans les workflows CI/CD
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
       timezone: "Europe/Paris"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 5
     commit-message:
       prefix: "ci(deps)"
-    groups:
-      minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"

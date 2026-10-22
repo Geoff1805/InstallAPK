@@ -5,6 +5,8 @@
 /.idea/libraries
 /.idea/modules.xml
 /.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
 .DS_Store
 /build
 /captures
@@ -15,10 +17,9 @@ app/build/
 *.apk
 *.aab
 
-# Ajouté automatiquement par Sentinel (Sécurité & Secrets)
+# Sécurité & Secrets
 .env
 .env.local
-*.keystore
 *.jks
 *.pem
 *.key
