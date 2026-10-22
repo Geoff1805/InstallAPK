@@ -31,7 +31,9 @@ android {
 
   val sentryDsn = (project.findProperty("SENTRY_DSN") as? String)
     ?: System.getenv("SENTRY_DSN")
-    ?: ""
+  val alertEmail = (project.findProperty("ALERT_EMAIL") as? String)
+    ?: System.getenv("ALERT_EMAIL")
+    ?: "geoff1805@duck.com"
 
   defaultConfig {
     applicationId = "fr.installapk.app"
@@ -41,7 +43,7 @@ android {
     versionName = appVersionName
 
     buildConfigField("String", "DEFAULT_GITHUB_TOKEN", "\"$defaultToken\"")
-    buildConfigField("String", "ALERT_EMAIL", "\"token.github@alsteens.net\"")
+    buildConfigField("String", "ALERT_EMAIL", "\"$alertEmail\"")
     buildConfigField("String", "SENTRY_DSN", "\"$sentryDsn\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
