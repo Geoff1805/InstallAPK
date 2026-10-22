@@ -16,7 +16,7 @@ okhttp = "4.12.0"
 coil = "2.7.0"
 chucker = "4.1.0"
 sentry = "7.20.0"
-ktlint = "12.1.2"
+ktlint = "14.2.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
