@@ -3,9 +3,23 @@ name: Android CI & Build APK
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - '**.md'
+      - '.github/workflows/**'
+      - 'docs/**'
+      - 'LICENSE'
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - '**.md'
+      - '.github/workflows/**'
+      - 'docs/**'
+      - 'LICENSE'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -67,21 +81,7 @@ jobs:
         with:
           name: InstallAPK.apk
           path: build-artifacts/InstallAPK.apk
-          retention-days: 30
-
-      - name: Upload Release APK (Compatibility)
-        uses: actions/upload-artifact@v4
-        with:
-          name: installapk-release-apk
-          path: build-artifacts/InstallAPK.apk
-          retention-days: 30
-
-      - name: Upload Debug APK (Compatibility)
-        uses: actions/upload-artifact@v4
-        with:
-          name: installapk-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-          retention-days: 30
+          retention-days: 3
 
       - name: Publish Direct Unzipped APK to GitHub Release
         env:
