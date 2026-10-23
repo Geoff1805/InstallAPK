@@ -65,22 +65,26 @@ jobs:
       - name: Prepare Normalized APK
         run: |
           mkdir -p build-artifacts
+          VERSION=$(grep 'versionName' version.properties | cut -d'=' -f2 | tr -d ' \r\n')
+          APK_NAME="InstallAPK-v${VERSION}.apk"
           RELEASE_APK=$(find app/build/outputs/apk/release/ -name "*.apk" | head -n 1)
           if [ -n "$RELEASE_APK" ]; then
-            cp "$RELEASE_APK" build-artifacts/InstallAPK.apk
-            echo "Copied Release APK to build-artifacts/InstallAPK.apk"
+            cp "$RELEASE_APK" "build-artifacts/${APK_NAME}"
+            echo "Copied Release APK to build-artifacts/${APK_NAME}"
           else
             DEBUG_APK=$(find app/build/outputs/apk/debug/ -name "*.apk" | head -n 1)
-            cp "$DEBUG_APK" build-artifacts/InstallAPK.apk
-            echo "Copied Debug APK to build-artifacts/InstallAPK.apk"
+            cp "$DEBUG_APK" "build-artifacts/${APK_NAME}"
+            echo "Copied Debug APK to build-artifacts/${APK_NAME}"
           fi
+          # Copie de compatibilité legacy sans version
+          cp "build-artifacts/${APK_NAME}" build-artifacts/InstallAPK.apk
           ls -lh build-artifacts/
 
       - name: Upload Normalized APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstallAPK.apk
-          path: build-artifacts/InstallAPK.apk
+          name: InstallAPK-v${{ env.APK_VERSION || 'latest' }}.apk
+          path: build-artifacts/InstallAPK-v*.apk
           retention-days: 3
 
       - name: Publish Direct Unzipped APK to GitHub Release
@@ -89,11 +93,12 @@ jobs:
         run: |
           VERSION=$(grep 'versionName' version.properties | cut -d'=' -f2 | tr -d ' \r\n')
           TAG="v${VERSION}"
-          echo "Publishing direct InstallAPK.apk for tag $TAG..."
+          APK_NAME="InstallAPK-v${VERSION}.apk"
+          echo "Publishing direct ${APK_NAME} for tag $TAG..."
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" build-artifacts/InstallAPK.apk --clobber
+            gh release upload "$TAG" "build-artifacts/${APK_NAME}" build-artifacts/InstallAPK.apk --clobber
           else
-            gh release create "$TAG" build-artifacts/InstallAPK.apk \
+            gh release create "$TAG" "build-artifacts/${APK_NAME}" build-artifacts/InstallAPK.apk \
               --title "InstallAPK v${VERSION}" \
-              --notes "Version ${VERSION} compilée automatiquement par GitHub Actions. Fichier APK direct sans archive zip."
+              --notes "Version ${VERSION} compilée automatiquement par GitHub Actions. Binaire APK direct avec nom normalisé InstallAPK-v${VERSION}.apk sans archive zip."
           fi

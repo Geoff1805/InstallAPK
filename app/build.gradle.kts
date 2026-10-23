@@ -25,6 +25,10 @@ android {
   val appVersionName = (project.findProperty("appVersionName") as? String)
     ?: versionProps.getProperty("versionName", "1.0.0")
 
+  base {
+    archivesName.set("InstallAPK-v$appVersionName")
+  }
+
   val defaultToken = (project.findProperty("DEFAULT_GITHUB_TOKEN") as? String)
     ?: System.getenv("DEFAULT_GITHUB_TOKEN")
     ?: ""

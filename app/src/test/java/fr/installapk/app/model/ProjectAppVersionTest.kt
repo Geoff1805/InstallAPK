@@ -247,4 +247,22 @@ class ProjectAppVersionTest {
         assertFalse("Non installée donc pas à jour", uninstalledApp.isUpToDate)
         assertTrue("Prête à être installée", uninstalledApp.needsInstallationOrUpdate)
     }
+
+    @Test
+    fun testScoreReleaseAssetPrioritizesVersionedApk() {
+        val app = createApp() // id = "TestApp", repoName = "TestApp"
+        val scoreVersioned = GitHubAppsRepository.scoreReleaseAsset("TestApp-v1.0.52.apk", app)
+        val scoreVersionedWithoutV = GitHubAppsRepository.scoreReleaseAsset("TestApp-1.0.52.apk", app)
+        val scoreExactLegacy = GitHubAppsRepository.scoreReleaseAsset("TestApp.apk", app)
+        val scoreContainsApp = GitHubAppsRepository.scoreReleaseAsset("TestApp-snapshot.apk", app)
+        val scoreGenericApk = GitHubAppsRepository.scoreReleaseAsset("other.apk", app)
+        val scoreNonApk = GitHubAppsRepository.scoreReleaseAsset("TestApp-v1.0.52.zip", app)
+
+        assertEquals("APK normalisé avec numéro de version doit avoir la priorité maximale (4)", 4, scoreVersioned)
+        assertEquals("APK avec numéro de version sans préfixe 'v' doit avoir la priorité maximale (4)", 4, scoreVersionedWithoutV)
+        assertEquals("APK exact sans version (legacy) doit avoir la priorité 3", 3, scoreExactLegacy)
+        assertEquals("APK contenant le nom sans version doit avoir la priorité 2", 2, scoreContainsApp)
+        assertEquals("APK générique externe doit avoir la priorité 1", 1, scoreGenericApk)
+        assertEquals("Fichier non APK doit être rejeté (-1)", -1, scoreNonApk)
+    }
 }

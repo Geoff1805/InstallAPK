@@ -745,7 +745,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun resolveSignatureConflictByUninstalling(app: ProjectApp) {
         val updatesDir = File(getApplication<Application>().filesDir, "updates")
-        val apkFile = _uiState.value.pendingInstallFile ?: File(updatesDir, "${app.id}.apk")
+        val fallbackFile = updatesDir.listFiles()
+            ?.filter { it.name.startsWith(app.id, ignoreCase = true) && it.name.endsWith(".apk", ignoreCase = true) }
+            ?.maxByOrNull { it.lastModified() }
+            ?: File(updatesDir, "${app.id}.apk")
+        val apkFile = _uiState.value.pendingInstallFile ?: fallbackFile
         pendingReinstallAfterUninstallAppId = app.id
         pendingReinstallApkFile = apkFile
         _uiState.update { it.copy(signatureConflictApp = null) }

@@ -811,10 +811,7 @@ class GitHubAppsRepository(private val context: Context) {
                             it.optString("created_at", "")
                         }
                         .thenByDescending {
-                            val name = it.optString("name", "")
-                            val exactName = "${app.id}.apk"
-                            name.equals(exactName, ignoreCase = true) ||
-                                (app.artifactPattern.isNotBlank() && name.equals(app.artifactPattern, ignoreCase = true))
+                            scoreReleaseAsset(it.optString("name", ""), app)
                         }
                         .thenByDescending {
                             val name = it.optString("name", "")
@@ -1161,19 +1158,14 @@ class GitHubAppsRepository(private val context: Context) {
                 val rel = releases.getJSONObject(i)
                 val assets = rel.optJSONArray("assets") ?: continue
                 var bestAsset: JSONObject? = null
-                val targetName = "${app.id}.apk"
+                var bestScore = -1
                 for (j in 0 until assets.length()) {
                     val asset = assets.getJSONObject(j)
                     val assetName = asset.optString("name", "")
-                    if (assetName.endsWith(".apk", ignoreCase = true)) {
-                        if (bestAsset == null) {
-                            bestAsset = asset
-                        } else {
-                            if (assetName.equals(targetName, ignoreCase = true) ||
-                                (app.artifactPattern.isNotBlank() && assetName.equals(app.artifactPattern, ignoreCase = true))) {
-                                bestAsset = asset
-                            }
-                        }
+                    val score = scoreReleaseAsset(assetName, app)
+                    if (score > bestScore) {
+                        bestScore = score
+                        bestAsset = asset
                     }
                 }
 
@@ -1290,8 +1282,18 @@ class GitHubAppsRepository(private val context: Context) {
             val updatesDir = File(context.filesDir, "updates")
             if (!updatesDir.exists()) updatesDir.mkdirs()
 
-            val destinationApk = File(updatesDir, "${app.id}.apk")
+            val cleanVer = ProjectApp.cleanVersion(app.latestVersionName).ifBlank { "latest" }
+            val destinationApk = File(updatesDir, "${app.id}-v${cleanVer}.apk")
             if (destinationApk.exists()) destinationApk.delete()
+
+            // Nettoyage proactif des anciennes versions APK de cette application pour préserver l'espace disque
+            updatesDir.listFiles()?.forEach { f ->
+                if (f.name.startsWith(app.id, ignoreCase = true) &&
+                    f.name.endsWith(".apk", ignoreCase = true) &&
+                    f.name != destinationApk.name) {
+                    f.delete()
+                }
+            }
 
             // Déterminer si le fichier téléchargé est directement un APK Android ou un conteneur ZIP d'artefact Actions
             val archiveType = classifyArchiveFile(tempDownloadFile)
@@ -1397,6 +1399,38 @@ class GitHubAppsRepository(private val context: Context) {
     }
 
     companion object {
+        /**
+         * Évalue la pertinence d'un asset ou artefact pour une application donnée :
+         * 4: Nom exact normalisé avec version (<AppName>-v*.apk ou <AppName>-*.apk)
+         * 3: Nom exact sans version (<AppName>.apk ou artifactPattern)
+         * 2: Nom contenant l'id ou repo de l'app
+         * 1: Tout autre APK (fallback)
+         * -1: Non APK ou exclu
+         */
+        fun scoreReleaseAsset(assetName: String, app: ProjectApp): Int {
+            if (!assetName.endsWith(".apk", ignoreCase = true)) return -1
+            val lower = assetName.lowercase()
+            val appIdLower = app.id.lowercase()
+            val repoLower = app.repoName.lowercase()
+            val patternLower = app.artifactPattern.lowercase().removeSuffix(".apk").trim()
+            val hasValidPattern = patternLower.isNotBlank() && patternLower != "apk"
+
+            if ((lower.startsWith("$appIdLower-") || lower.startsWith("${appIdLower}_") ||
+                 lower.startsWith("$repoLower-") || lower.startsWith("${repoLower}_")) &&
+                lower.any { it.isDigit() }) {
+                return 4
+            }
+            if (lower == "$appIdLower.apk" || lower == "$repoLower.apk" ||
+                (hasValidPattern && lower == app.artifactPattern.lowercase())) {
+                return 3
+            }
+            if (lower.contains(appIdLower) || lower.contains(repoLower) ||
+                (hasValidPattern && lower.contains(patternLower))) {
+                return 2
+            }
+            return 1
+        }
+
         /**
          * Inspecte la structure interne d'un fichier téléchargé pour distinguer :
          * - Un fichier .apk direct (archive ZIP contenant AndroidManifest.xml ou classes.dex à la racine)

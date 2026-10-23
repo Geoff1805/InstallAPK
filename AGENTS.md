@@ -1,6 +1,6 @@
 # Règles d'Agent — Projet InstallAPK (AppUpdater / AppInstaller)
 
-> **Héritage global** : Ce projet applique l'ensemble des règles transversales consolidées dans [`~/.gemini/config/AGENTS.md`](file:///C:/Users/geoff/.gemini/config/AGENTS.md) (Sécurité Dependabot, Zéro warning CI, Normalisation de l'APK `InstallAPK.apk` sans ZIP, éradication de Foojay, économie de jetons).
+> **Héritage global** : Ce projet applique l'ensemble des règles transversales consolidées dans [`~/.gemini/config/AGENTS.md`](file:///C:/Users/geoff/.gemini/config/AGENTS.md) (Sécurité Dependabot, Zéro warning CI, Normalisation de l'APK `<AppName>-v<versionName>.apk` sans ZIP, éradication de Foojay, économie de jetons).
 
 ## Architecture & Fonctionnalités Clés
 - **Détection automatique des versions d'APKs** : Surveillance des Releases GitHub et derniers artefacts de build Actions des dépôts de l'écosystème.
@@ -16,7 +16,7 @@
    - Si le projet est une application Android, `InstallAPK` affiche immédiatement une boîte de dialogue proposant à l'utilisateur d'installer l'APK en un clic.
    - La carte de l'application affiche un badge proéminent « ✨ NOUVEAU » et se positionne en tête de liste.
 3. **Prise en charge transverse par l'agent** :
-   - Dès l'initialisation d'un nouveau dépôt Android, l'agent configure le workflow GitHub Actions pour produire l'artefact `<AppName>.apk` directement reconnu par `InstallAPK`.
+   - Dès l'initialisation d'un nouveau dépôt Android, l'agent configure le workflow GitHub Actions pour produire l'artefact `<AppName>-v<versionName>.apk` directement reconnu par `InstallAPK`.
 
 ## Surveillance et Alertes des Clés GitHub & Tokens API (/learn)
 - Notification proactive à l'utilisateur en cas de token GitHub expiré, invalide (401 Bad Credentials) ou avec des permissions insuffisantes.
