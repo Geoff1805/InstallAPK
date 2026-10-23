@@ -1,9 +1,6 @@
 name: Check GitHub PAT Validity & Alert
 
 on:
-  schedule:
-    # Vérification quotidienne automatique chaque jour à 06:00 UTC
-    - cron: '0 6 * * *'
   workflow_dispatch:
 
 permissions:
