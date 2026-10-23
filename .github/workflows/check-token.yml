@@ -16,7 +16,7 @@ jobs:
       - name: Validate GitHub PAT Expiration and Status
         id: check_token
         env:
-          TARGET_TOKEN: ${{ vars.CHECK_PAT_TOKEN }}
+          TARGET_TOKEN: ${{ secrets.CHECK_PAT_TOKEN }}
           ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
         run: |
           if [ -z "$TARGET_TOKEN" ]; then
