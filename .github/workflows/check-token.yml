@@ -71,7 +71,7 @@ jobs:
 
       - name: Create or Update GitHub Issue Alert
         if: steps.check_token.outputs.status == 'invalid'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v7
         with:
           script: |
             const email = process.env.ALERT_EMAIL || 'token.github@alsteens.net';
