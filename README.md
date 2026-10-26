@@ -34,3 +34,11 @@ Fini la corvée de copier manuellement les fichiers APK depuis votre PC vers vot
 - **Installation Native** : Android `FileProvider` (`ACTION_VIEW` / `application/vnd.android.package-archive`).
 - **Réseau** : OkHttp 4 avec gestion du streaming de téléchargement et suivi de progression.
 - **CI/CD First** : Compilation automatique du binaire APK sur GitHub Actions à chaque push.
+
+---
+
+## 📄 Licence
+
+MIT — voir [LICENSE](LICENSE).
+
+Copyright (c) 2026 Geoff1805
