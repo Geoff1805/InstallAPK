@@ -19,8 +19,10 @@ app/build/
 
 # Sécurité & Secrets
 .env
+.env.*
 .env.local
 *.jks
+*.keystore
 *.pem
 *.key
 *.p12
