@@ -77,12 +77,10 @@ try {
 
             if ($ReleaseApk) {
                 Copy-Item $ReleaseApk.FullName "build-artifacts/$ApkName" -Force
-                Copy-Item $ReleaseApk.FullName "build-artifacts/$AppName.apk" -Force
                 Copy-Item $ReleaseApk.FullName "$ApkName" -Force
-                Copy-Item $ReleaseApk.FullName "$AppName.apk" -Force
                 $SizeMb = [math]::Round((Get-Item "build-artifacts/$ApkName").Length / 1MB, 2)
                 Write-Host "APK normalise pret : build-artifacts/$ApkName ($SizeMb Mo)" -ForegroundColor Green
-                Write-Host "APK copie a la racine : $ApkName et $AppName.apk" -ForegroundColor Green
+                Write-Host "APK copie a la racine : $ApkName" -ForegroundColor Green
             } else {
                 Write-Warning "Aucun APK release trouve dans app/build/outputs/apk/release/"
             }
@@ -119,10 +117,10 @@ try {
 
         if ($ReleaseExists) {
             Write-Host "Mise a jour des binaires pour le tag existant $Tag..." -ForegroundColor Cyan
-            gh release upload $Tag "build-artifacts/$ApkName" "build-artifacts/$AppName.apk" --clobber
+            gh release upload $Tag "build-artifacts/$ApkName" --clobber
         } else {
             Write-Host "Creation d'une nouvelle Release $Tag..." -ForegroundColor Cyan
-            gh release create $Tag "build-artifacts/$ApkName" "build-artifacts/$AppName.apk" --title "$AppName $Tag" --generate-notes
+            gh release create $Tag "build-artifacts/$ApkName" --title "$AppName $Tag" --generate-notes
         }
         Write-Host "Binaire APK publie sur GitHub Releases." -ForegroundColor Green
     } else {
