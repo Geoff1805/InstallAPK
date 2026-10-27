@@ -106,8 +106,18 @@ try {
     Write-Host "`n[4/5] Publication sur GitHub Releases..." -ForegroundColor Yellow
     $ArtifactTarget = "build-artifacts/$ApkName"
     if (Test-Path $ArtifactTarget) {
-        $rel = gh release view $Tag 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        $ReleaseExists = $false
+        try {
+            $prevEA = $ErrorActionPreference
+            $ErrorActionPreference = "SilentlyContinue"
+            $null = & gh release view $Tag 2>$null
+            if ($LASTEXITCODE -eq 0) { $ReleaseExists = $true }
+            $ErrorActionPreference = $prevEA
+        } catch {
+            $ReleaseExists = $false
+        }
+
+        if ($ReleaseExists) {
             Write-Host "Mise a jour des binaires pour le tag existant $Tag..." -ForegroundColor Cyan
             gh release upload $Tag "build-artifacts/$ApkName" "build-artifacts/$AppName.apk" --clobber
         } else {
