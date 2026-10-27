@@ -78,8 +78,11 @@ try {
             if ($ReleaseApk) {
                 Copy-Item $ReleaseApk.FullName "build-artifacts/$ApkName" -Force
                 Copy-Item $ReleaseApk.FullName "build-artifacts/$AppName.apk" -Force
+                Copy-Item $ReleaseApk.FullName "$ApkName" -Force
+                Copy-Item $ReleaseApk.FullName "$AppName.apk" -Force
                 $SizeMb = [math]::Round((Get-Item "build-artifacts/$ApkName").Length / 1MB, 2)
                 Write-Host "APK normalise pret : build-artifacts/$ApkName ($SizeMb Mo)" -ForegroundColor Green
+                Write-Host "APK copie a la racine : $ApkName et $AppName.apk" -ForegroundColor Green
             } else {
                 Write-Warning "Aucun APK release trouve dans app/build/outputs/apk/release/"
             }
