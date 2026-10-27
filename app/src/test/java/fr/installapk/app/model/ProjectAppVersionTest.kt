@@ -265,4 +265,38 @@ class ProjectAppVersionTest {
         assertEquals("APK générique externe doit avoir la priorité 1", 1, scoreGenericApk)
         assertEquals("Fichier non APK doit être rejeté (-1)", -1, scoreNonApk)
     }
+
+    @Test
+    fun testScoreReleaseAssetWithHyphensAndCamelCase() {
+        val controllerApp = ProjectApp(
+            id = "antigravity-controller",
+            repoOwner = "Geoff1805",
+            repoName = "antigravity-controller",
+            packageName = "fr.antigravity.controller",
+            displayName = "Antigravity Controller",
+            description = "Contrôleur",
+            iconEmoji = "🎮",
+            artifactPattern = "AntigravityController.apk"
+        )
+        val score = GitHubAppsRepository.scoreReleaseAsset("AntigravityController-v1.0.0.apk", controllerApp)
+        assertEquals("AntigravityController-v1.0.0.apk doit être reconnu avec score maximal 4 pour antigravity-controller", 4, score)
+    }
+
+    @Test
+    fun testApkFilenameSanitizationStrictPattern() {
+        val app = createApp()
+        val rawVersion = "Run #42 (debug)"
+        val cleanVer = ProjectApp.cleanVersion(rawVersion)
+            .replace("Run #", "run-")
+            .replace("#", "")
+            .replace(Regex("[^a-zA-Z0-9.-]"), "-")
+            .trim('-')
+            .ifBlank { "latest" }
+        val sanitizedId = app.id.replace(Regex("[^a-zA-Z0-9.-]"), "-").trim('-')
+        val finalFilename = "$sanitizedId-v$cleanVer.apk"
+
+        assertTrue("Le nom doit respecter la règle [a-zA-Z0-9.-]", finalFilename.matches(Regex("^[a-zA-Z0-9.-]+$")))
+        assertFalse("Ne doit contenir aucun espace", finalFilename.contains(" "))
+        assertFalse("Ne doit contenir aucun dièse", finalFilename.contains("#"))
+    }
 }

@@ -9,6 +9,11 @@ import android.util.Log
 import com.chuckerteam.chucker.api.ChuckerInterceptor
 import fr.installapk.app.model.ProjectApp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -37,6 +42,18 @@ class GitHubAppsRepository(private val context: Context) {
         .followRedirects(true)
         .followSslRedirects(true)
         .addInterceptor(ChuckerInterceptor.Builder(context).build())
+        .addNetworkInterceptor { chain ->
+            val req = chain.request()
+            val host = req.url.host.lowercase()
+            if (host.contains("s3.amazonaws.com") || host.contains("github-production-release-asset") || host.contains("blob.core.windows.net")) {
+                val stripped = req.newBuilder()
+                    .removeHeader("Authorization")
+                    .build()
+                chain.proceed(stripped)
+            } else {
+                chain.proceed(req)
+            }
+        }
         .build()
 
     private val defaultProjects = listOf(
@@ -85,7 +102,7 @@ class GitHubAppsRepository(private val context: Context) {
             id = "antigravity-controller",
             repoOwner = "Geoff1805",
             repoName = "antigravity-controller",
-            packageName = "com.antigravity.antigravity_controller",
+            packageName = "fr.antigravity.controller",
             displayName = "Antigravity Controller",
             description = "Contrôleur mobile et dashboard Flutter pour l'agent Antigravity",
             iconEmoji = "🎮",
@@ -368,9 +385,16 @@ class GitHubAppsRepository(private val context: Context) {
         // Sauvegarder dans le cache pour les prochains démarrages
         saveDiscoveredProjectsCache(allProjects)
 
-        // Récupérer les informations de version et d'artefact pour chaque application
-        allProjects.map { app ->
-            fetchLatestAppInfo(app, token)
+        // Récupérer les informations de version et d'artefact en parallèle contrôlé (Semaphore 5)
+        val fetchSemaphore = Semaphore(5)
+        coroutineScope {
+            allProjects.map { app ->
+                async(Dispatchers.IO) {
+                    fetchSemaphore.withPermit {
+                        fetchLatestAppInfo(app, token)
+                    }
+                }
+            }.awaitAll()
         }
     }
 
@@ -615,6 +639,13 @@ class GitHubAppsRepository(private val context: Context) {
             return known.packageName
         }
 
+        // 2.5 Tenter de lire composeApp/build.gradle.kts (Kotlin Multiplatform / Compose)
+        val extractedFromKmpKts = fetchAndParsePackageFromBuildGradle(owner, repo, "composeApp/build.gradle.kts", token)
+        if (!extractedFromKmpKts.isNullOrBlank()) {
+            prefs.edit().putString("pkg_$repo", extractedFromKmpKts).apply()
+            return extractedFromKmpKts
+        }
+
         // 3. Tenter de lire app/build.gradle.kts depuis l'API GitHub
         val extractedFromKts = fetchAndParsePackageFromBuildGradle(owner, repo, "app/build.gradle.kts", token)
         if (!extractedFromKts.isNullOrBlank()) {
@@ -673,7 +704,7 @@ class GitHubAppsRepository(private val context: Context) {
             val text = String(decodedBytes, Charsets.UTF_8)
 
             // Regex pour applicationId ou namespace
-            val appIdRegex = Regex("""applicationId\s*(?:=)?\s*["']([^"']+)["']""")
+            val appIdRegex = Regex("""(?:applicationId|namespace)\s*(?:=)?\s*["']([^"']+)["']""")
             val matchAppId = appIdRegex.find(text)
             if (matchAppId != null) {
                 return matchAppId.groupValues[1]
@@ -794,7 +825,7 @@ class GitHubAppsRepository(private val context: Context) {
                         normalizedName.contains(repoNorm) ||
                         (repoPrefix.isNotBlank() && normalizedName.contains(repoPrefix)) ||
                         (patNorm.isNotBlank() && normalizedName.contains(patNorm))
-                    val hasApk = name.contains("apk", ignoreCase = true)
+                    val hasApk = name.contains("apk", ignoreCase = true) || matchesApp
 
                     if (matchesApp && hasApk) {
                         candidateArtifacts.add(art)
@@ -1282,13 +1313,19 @@ class GitHubAppsRepository(private val context: Context) {
             val updatesDir = File(context.filesDir, "updates")
             if (!updatesDir.exists()) updatesDir.mkdirs()
 
-            val cleanVer = ProjectApp.cleanVersion(app.latestVersionName).ifBlank { "latest" }
-            val destinationApk = File(updatesDir, "${app.id}-v${cleanVer}.apk")
+            val cleanVer = ProjectApp.cleanVersion(app.latestVersionName)
+                .replace("Run #", "run-")
+                .replace("#", "")
+                .replace(Regex("[^a-zA-Z0-9.-]"), "-")
+                .trim('-')
+                .ifBlank { "latest" }
+            val sanitizedId = app.id.replace(Regex("[^a-zA-Z0-9.-]"), "-").trim('-')
+            val destinationApk = File(updatesDir, "$sanitizedId-v$cleanVer.apk")
             if (destinationApk.exists()) destinationApk.delete()
 
             // Nettoyage proactif des anciennes versions APK de cette application pour préserver l'espace disque
             updatesDir.listFiles()?.forEach { f ->
-                if (f.name.startsWith(app.id, ignoreCase = true) &&
+                if (f.name.startsWith(sanitizedId, ignoreCase = true) &&
                     f.name.endsWith(".apk", ignoreCase = true) &&
                     f.name != destinationApk.name) {
                     f.delete()
@@ -1415,17 +1452,25 @@ class GitHubAppsRepository(private val context: Context) {
             val patternLower = app.artifactPattern.lowercase().removeSuffix(".apk").trim()
             val hasValidPattern = patternLower.isNotBlank() && patternLower != "apk"
 
+            val normAsset = lower.replace("-", "").replace("_", "")
+            val normAppId = appIdLower.replace("-", "").replace("_", "")
+            val normRepo = repoLower.replace("-", "").replace("_", "")
+            val normPattern = patternLower.replace("-", "").replace("_", "")
+
             if ((lower.startsWith("$appIdLower-") || lower.startsWith("${appIdLower}_") ||
-                 lower.startsWith("$repoLower-") || lower.startsWith("${repoLower}_")) &&
+                 lower.startsWith("$repoLower-") || lower.startsWith("${repoLower}_") ||
+                 normAsset.startsWith(normAppId) || normAsset.startsWith(normRepo)) &&
                 lower.any { it.isDigit() }) {
                 return 4
             }
             if (lower == "$appIdLower.apk" || lower == "$repoLower.apk" ||
-                (hasValidPattern && lower == app.artifactPattern.lowercase())) {
+                normAsset == "${normAppId}.apk" || normAsset == "${normRepo}.apk" ||
+                (hasValidPattern && (lower == app.artifactPattern.lowercase() || normAsset == "${normPattern}.apk"))) {
                 return 3
             }
             if (lower.contains(appIdLower) || lower.contains(repoLower) ||
-                (hasValidPattern && lower.contains(patternLower))) {
+                normAsset.contains(normAppId) || normAsset.contains(normRepo) ||
+                (hasValidPattern && (lower.contains(patternLower) || normAsset.contains(normPattern)))) {
                 return 2
             }
             return 1

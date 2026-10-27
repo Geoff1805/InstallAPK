@@ -163,11 +163,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val app = getApplication<Application>()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 try {
-                    app.registerReceiver(packageBroadcastReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                    // Les intents système ACTION_PACKAGE_* sont émis par le système Android (autre UID/process)
+                    // et nécessitent formellement RECEIVER_EXPORTED sur Android 13+ (API 33+)
+                    app.registerReceiver(packageBroadcastReceiver, filter, Context.RECEIVER_EXPORTED)
                     isReceiverRegistered = true
                 } catch (_: Exception) {
                     try {
-                        app.registerReceiver(packageBroadcastReceiver, filter, Context.RECEIVER_EXPORTED)
+                        app.registerReceiver(packageBroadcastReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
                         isReceiverRegistered = true
                     } catch (_: Exception) {
                         app.registerReceiver(packageBroadcastReceiver, filter)
@@ -390,6 +392,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _uiState.update { it.copy(isUpdatingAll = false) }
                     }
                     return
+                } else {
+                    // L'utilisateur est revenu sur l'app mais le binaire n'a pas été installé (annulation, refus Play Protect ou échec système)
+                    val elapsedSinceLaunch = System.currentTimeMillis() - installLaunchedAtMillis
+                    if (elapsedSinceLaunch > 1500L && state.isWaitingForUserInstall) {
+                        _uiState.update { s ->
+                            s.copy(
+                                isWaitingForUserInstall = false,
+                                activeUpdateId = if (s.isUpdatingAll) s.activeUpdateId else null,
+                                apps = s.apps.map {
+                                    if (it.id == activeId) {
+                                        it.copy(
+                                            isUpdating = false,
+                                            statusText = "Installation en attente (annulée ou non confirmée)"
+                                        )
+                                    } else {
+                                        it
+                                    }
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -527,11 +550,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             state.managedApps.filter { it.needsInstallationOrUpdate }
         }
 
-        val selfCandidate = state.selfApp?.takeIf { it.hasUpdateAvailable }
+        val selfCandidate = state.selfApp?.takeIf { if (onlyInstalledUpdates) it.hasUpdateAvailable else it.needsInstallationOrUpdate }
         val appsToUpdate = buildList {
             addAll(managedCandidates)
             if (selfCandidate != null) {
-                add(selfCandidate)
+                add(selfCandidate) // InstallAPK toujours en tout dernier pour ne jamais couper le process avant la fin des autres apps
             }
         }
 
@@ -643,6 +666,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         triggerPreDownloadForQueue()
     }
 
+    private fun findCachedApk(app: ProjectApp): File? {
+        val updatesDir = File(getApplication<Application>().filesDir, "updates")
+        if (!updatesDir.exists()) return null
+        val cleanVer = ProjectApp.cleanVersion(app.latestVersionName)
+            .replace("Run #", "run-")
+            .replace("#", "")
+            .replace(Regex("[^a-zA-Z0-9.-]"), "-")
+            .trim('-')
+            .ifBlank { "latest" }
+        val sanitizedId = app.id.replace(Regex("[^a-zA-Z0-9.-]"), "-").trim('-')
+        val exactFile = File(updatesDir, "$sanitizedId-v$cleanVer.apk")
+        if (exactFile.exists() && exactFile.length() > 50_000L) {
+            return exactFile
+        }
+        return updatesDir.listFiles()?.firstOrNull { f ->
+            f.name.startsWith(sanitizedId, ignoreCase = true) &&
+                f.name.endsWith(".apk", ignoreCase = true) &&
+                f.length() > 50_000L
+        }
+    }
+
     private fun startDownloadAndInstall(app: ProjectApp) {
         val currentToken = _uiState.value.token
         val context = getApplication<Application>()
@@ -659,7 +703,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
-            val preDownloaded = preDownloadedFiles.remove(app.id)?.takeIf { it.exists() && it.length() > 0L }
+            val cachedApk = findCachedApk(app)
+            val preDownloaded = preDownloadedFiles.remove(app.id)?.takeIf { it.exists() && it.length() > 0L } ?: cachedApk
             val apkFile = preDownloaded ?: repository.downloadAndExtractApk(app, currentToken) { progress ->
                 _uiState.update { state ->
                     state.copy(
