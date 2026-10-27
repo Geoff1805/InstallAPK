@@ -45,7 +45,7 @@ class GitHubAppsRepository(private val context: Context) {
         .addNetworkInterceptor { chain ->
             val req = chain.request()
             val host = req.url.host.lowercase()
-            if (host.contains("s3.amazonaws.com") || host.contains("github-production-release-asset") || host.contains("blob.core.windows.net")) {
+            if (host != "api.github.com" && host != "uploads.github.com") {
                 val stripped = req.newBuilder()
                     .removeHeader("Authorization")
                     .build()

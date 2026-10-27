@@ -771,7 +771,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         apps = state.apps.map {
                             if (it.id == app.id) it.copy(isUpdating = false, statusText = "Échec du téléchargement") else it
                         },
-                        activeUpdateId = null
+                        activeUpdateId = null,
+                        errorMessage = "Impossible de télécharger l'APK pour ${app.displayName}. Vérifiez votre connexion ou les accès de votre clé GitHub."
                     )
                 }
                 if (_uiState.value.updateQueue.isNotEmpty()) {

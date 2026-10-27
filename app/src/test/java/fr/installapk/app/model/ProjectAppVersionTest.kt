@@ -163,9 +163,21 @@ class ProjectAppVersionTest {
     }
 
     @Test
-    fun testInstalledAfterBuildTimestampIsUpToDateEvenWhenTagDiffers() {
-        // L'APK a été installé sur le téléphone à t=2_000_000 alors que la Release GitHub a été publiée à t=1_000_000
+    fun testInstalledAfterBuildTimestampForSameVersionBuilds() {
+        // Pour une version identique, l'installation postérieure au build confirme que le téléphone est à jour
         val app = createApp(
+            installedVersionCode = 1L,
+            installedVersionName = "1.0.45",
+            latestVersionCode = 1L,
+            latestVersionName = "v1.0.45",
+            installedUpdateTime = 2_000_000L,
+            artifactTimestamp = 1_000_000L
+        )
+        assertTrue("Même version installée après la date du build GitHub -> À jour", app.isUpToDate)
+        assertFalse(app.hasUpdateAvailable)
+
+        // En revanche, si la version installée est formellement inférieure, la mise à jour doit être proposée
+        val appLower = createApp(
             installedVersionCode = 1L,
             installedVersionName = "1.0.0",
             latestVersionCode = 1L,
@@ -173,8 +185,8 @@ class ProjectAppVersionTest {
             installedUpdateTime = 2_000_000L,
             artifactTimestamp = 1_000_000L
         )
-        assertTrue("Installé après la date du build GitHub -> À jour", app.isUpToDate)
-        assertFalse(app.hasUpdateAvailable)
+        assertFalse("Version inférieure 1.0.0 < 1.0.45 -> Mise à jour REQUISE", appLower.isUpToDate)
+        assertTrue("Une mise à jour doit être disponible", appLower.hasUpdateAvailable)
     }
 
     @Test

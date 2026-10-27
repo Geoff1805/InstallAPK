@@ -43,29 +43,10 @@ data class ProjectApp(
 
             // 1. IDENTIFIANT D'ARTEFACT / ASSET DÉJÀ INSTALLÉ (Priorité absolue)
             // Si ce binaire précis (Release asset ID ou Actions artifact ID) a déjà été installé
-            // sur l'appareil, l'application est formellement à jour même si le tag GitHub diffère du manifeste APK.
+            // sur l'appareil par InstallAPK, l'application est formellement à jour.
             if (latestArtifactId != null && lastInstalledArtifactId != null && latestArtifactId == lastInstalledArtifactId) {
                 return true
             }
-
-            // 2. HORODATAGE D'INSTALLATION ANDROID vs DATE DE PUBLICATION GITHUB
-            // Si le package installé sur le téléphone a été mis à jour APRÈS la publication du dernier build GitHub,
-            // l'appareil dispose déjà d'un build égal ou plus récent.
-            if (installedUpdateTime != null && artifactTimestamp != null && artifactTimestamp > 0L) {
-                val safeThreshold = if (artifactTimestamp > 30_000L) artifactTimestamp - 30_000L else 0L
-                if (installedUpdateTime >= safeThreshold) {
-                    val hasStrictNewerCode = installedVersionCode != null &&
-                        latestVersionCode != null &&
-                        installedVersionCode > 0L &&
-                        latestVersionCode > installedVersionCode
-                    if (!hasStrictNewerCode) {
-                        return true
-                    }
-                }
-            }
-
-            val hasInstalledCode = installedVersionCode != null && installedVersionCode > 0
-            val hasLatestCode = latestVersionCode != null && latestVersionCode > 0
 
             val cleanInstalled = cleanVersion(installedVersionName)
             val cleanLatest = cleanVersion(latestVersionName)
@@ -75,17 +56,20 @@ data class ProjectApp(
                 if (isInstalledSem && isLatestSem) compareSemanticVersions(cleanInstalled, cleanLatest) else null
             }.getOrNull()
 
-            // 3. COMPARAISON SÉMANTIQUE DE VERSION
+            // 2. COMPARAISON SÉMANTIQUE DE VERSION (Priorité logique)
             if (semCmp != null) {
                 if (semCmp < 0) {
-                    return false
+                    return false // Version installée formellement inférieure -> Mise à jour REQUISE
                 }
                 if (semCmp > 0) {
-                    return true
+                    return true // Version installée supérieure (ex: dev local) -> À jour
                 }
+                // Si semCmp == 0, les versions sont identiques -> vérifier versionCode ou build CI ci-dessous
             }
 
-            // 4. CRITÈRE OFFICIEL ANDROID : versionCode
+            // 3. CRITÈRE OFFICIEL ANDROID : versionCode
+            val hasInstalledCode = installedVersionCode != null && installedVersionCode > 0
+            val hasLatestCode = latestVersionCode != null && latestVersionCode > 0
             if (hasInstalledCode && hasLatestCode) {
                 if (installedVersionCode!! < latestVersionCode!!) {
                     return false
@@ -95,17 +79,24 @@ data class ProjectApp(
                 }
             }
 
-            // 5. CRITÈRE HORODATAGE (Détection des nouveaux builds CI quand les versions sont identiques)
+            // 4. PAR DÉFAUT SI IDENTIQUES : Si les versions nettoyées sont identiques et non vides
+            if (cleanInstalled.isNotBlank() && cleanLatest.isNotBlank() && cleanInstalled.equals(cleanLatest, ignoreCase = true)) {
+                // Même version : vérifier si un build CI plus récent a été produit après l'installation
+                if (installedUpdateTime != null && artifactTimestamp != null && artifactTimestamp > 0L) {
+                    val safeUpper = if (installedUpdateTime < Long.MAX_VALUE - 60_000L) installedUpdateTime + 60_000L else Long.MAX_VALUE
+                    if (artifactTimestamp > safeUpper) {
+                        return false // Nouveau build CI disponible pour la même version
+                    }
+                }
+                return true
+            }
+
+            // 5. Cas où les versions ne sont pas sémantiques (ex: CI run numbers "Run #45")
             if (installedUpdateTime != null && artifactTimestamp != null && artifactTimestamp > 0L) {
                 val safeUpper = if (installedUpdateTime < Long.MAX_VALUE - 60_000L) installedUpdateTime + 60_000L else Long.MAX_VALUE
                 if (artifactTimestamp > safeUpper) {
                     return false
                 }
-                return true
-            }
-
-            // 6. PAR DÉFAUT : Si les versions nettoyées sont identiques et non vides
-            if (cleanInstalled.isNotBlank() && cleanLatest.isNotBlank() && cleanInstalled.equals(cleanLatest, ignoreCase = true)) {
                 return true
             }
 

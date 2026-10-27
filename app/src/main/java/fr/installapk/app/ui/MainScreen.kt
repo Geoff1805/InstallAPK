@@ -6,6 +6,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -176,6 +179,7 @@ fun MainScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .navigationBarsPadding()
                         .padding(16.dp)
                 ) {
                     if (uiState.needsInstallPermission) {
@@ -718,7 +722,9 @@ fun MainScreen(
 
             item {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     FilterChip(
@@ -1226,15 +1232,16 @@ fun SelfAppCard(
             .fillMaxWidth()
             .border(
                 width = 1.dp,
-                color = if (hasUpdate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                color = if (hasUpdate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                 shape = RoundedCornerShape(16.dp)
             ),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (hasUpdate) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            containerColor = if (hasUpdate) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            // En-tête : Icône + Titre + Badge GESTIONNAIRE
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
@@ -1251,7 +1258,7 @@ fun SelfAppCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "InstallAPK (Cette application)",
+                            text = "InstallAPK",
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp
                         )
@@ -1272,10 +1279,10 @@ fun SelfAppCard(
                     val installedName = app.installedVersionName?.let { ProjectApp.cleanVersion(it) } ?: "?"
                     val latestName = app.latestVersionName?.let { ProjectApp.cleanVersion(it) } ?: "?"
                     val subtitle = when {
-                        isUpToDate -> "Version actuelle : v$installedName (À jour)"
+                        isUpToDate -> "Version installée : v$installedName (À jour)"
                         installedName != latestName && installedName != "?" && latestName != "?" ->
                             "Mise à jour disponible : v$installedName ➔ v$latestName"
-                        else -> "Nouveau build CI disponible : v$installedName"
+                        else -> "Nouveau build disponible : v$installedName"
                     }
                     Text(
                         text = subtitle,
@@ -1283,72 +1290,106 @@ fun SelfAppCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
 
-                Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+            Spacer(modifier = Modifier.height(8.dp))
 
-                when {
-                    isUpdating -> {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                    }
-                    hasUpdate -> {
-                        Button(
-                            onClick = onUpdate,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary
-                            )
+            // Ligne d'actions dédiée (pleine largeur, claire et spacieuse)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Statut visuel à gauche
+                if (isUpToDate) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.SystemUpdateAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp)
+                            )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Mettre à jour", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                "Application à jour",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
-                    isUpToDate -> {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant
+                } else if (hasUpdate) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.errorContainer
+                    ) {
+                        Text(
+                            "Nouvelle version prête",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                } else {
+                    Spacer(modifier = Modifier.width(1.dp))
+                }
+
+                // Boutons d'action à droite
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    when {
+                        isUpdating -> {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                        }
+                        hasUpdate -> {
+                            Button(
+                                onClick = onUpdate,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                )
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        Icons.Default.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("À jour", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
-                                }
+                                Icon(Icons.Default.SystemUpdateAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Mettre à jour", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             }
+                        }
+                        isUpToDate -> {
                             IconButton(
                                 onClick = onRequestForceReinstall,
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(
                                     Icons.Default.Refresh,
                                     contentDescription = "Réinstaller",
                                     tint = MaterialTheme.colorScheme.outline,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                             IconButton(
                                 onClick = onUninstall,
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(
                                     Icons.Default.DeleteOutline,
                                     contentDescription = "Désinstaller InstallAPK",
                                     tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
-                    }
-                    else -> {
-                        Text("Prêt", style = MaterialTheme.typography.labelSmall)
+                        else -> {
+                            Text("Prêt", style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
             }
@@ -1402,19 +1443,19 @@ fun AppCard(
             ),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (app.isNew) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surface
+            containerColor = if (app.isNew) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Ligne Titre + Emoji
+            // En-tête : Icône + Titre + NOUVEAU + Description
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 AppIcon(
                     app = app,
-                    size = 48.dp,
+                    size = 46.dp,
                     shape = RoundedCornerShape(12.dp),
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -1426,7 +1467,7 @@ fun AppCard(
                         Text(
                             text = app.displayName,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp
+                            fontSize = 16.sp
                         )
                         if (app.isNew) {
                             Spacer(modifier = Modifier.width(6.dp))
@@ -1448,15 +1489,20 @@ fun AppCard(
                         text = app.description,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Badge d'état de version (Material 3)
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Ligne de Badges d'état (Mise à jour disponible, À jour, etc.)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 when {
                     isQueued -> {
                         Surface(
@@ -1503,7 +1549,7 @@ fun AppCard(
                     isUpToDate -> {
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
                         ) {
                             Text(
                                 "✓ À jour (v${ProjectApp.cleanVersion(app.installedVersionName ?: "?")})",
@@ -1523,9 +1569,9 @@ fun AppCard(
                             val cleanLat = ProjectApp.cleanVersion(app.latestVersionName)
                             val badgeText = when {
                                 cleanInst.isNotBlank() && cleanLat.isNotBlank() && !cleanInst.equals(cleanLat, ignoreCase = true) ->
-                                    "⬆ Mise à jour disponible (v$cleanInst → v$cleanLat)"
+                                    "⬆ Mise à jour (v$cleanInst → v$cleanLat)"
                                 cleanInst.isNotBlank() ->
-                                    "⬆ Nouveau build CI disponible (v$cleanInst)"
+                                    "⬆ Nouveau build CI disponible"
                                 else ->
                                     "⬆ Mise à jour disponible (v${app.latestVersionName ?: "?"})"
                             }
@@ -1553,9 +1599,17 @@ fun AppCard(
                         }
                     }
                 }
+
+                if (app.statusText != null && app.statusText != "Prêt") {
+                    Text(
+                        text = app.statusText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
             }
 
-            // Notes de version / Changelog (Inspiré d'Obtainium)
+            // Notes de version / Changelog
             if (!app.releaseNotes.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(
@@ -1566,7 +1620,7 @@ fun AppCard(
                         Icons.AutoMirrored.Filled.Article,
                         contentDescription = "Changelog",
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
@@ -1596,10 +1650,10 @@ fun AppCard(
             }
 
             Spacer(modifier = Modifier.height(10.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Ligne de détails et boutons d'action
+            // SECTION INFORMATIONS DE VERSIONS (pleine largeur, non compressée)
             val installedCodeStr = if (app.installedVersionCode != null && app.installedVersionCode > 0) " (build ${app.installedVersionCode})" else ""
             val latestCodeStr = if (app.latestVersionCode != null && app.latestVersionCode > 0) " (build ${app.latestVersionCode})" else ""
             val installedNameStr = if (app.installedVersionName.isNullOrBlank()) "" else "v${ProjectApp.cleanVersion(app.installedVersionName)}"
@@ -1614,201 +1668,190 @@ fun AppCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (isInstalled) "Installé : $installedNameStr$installedCodeStr" else "Non installé sur le téléphone",
+                        text = if (isInstalled) "Installé : $installedNameStr$installedCodeStr" else "Non installé sur l'appareil",
                         style = MaterialTheme.typography.labelMedium,
                         color = if (isInstalled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
                     )
-                    if (app.latestVersionName != null) {
+                    if (app.latestVersionName != null && (!isInstalled || hasUpdate)) {
                         Text(
-                            text = "Dernière CI : $latestNameStr$latestCodeStr",
+                            text = "Dernière version : $latestNameStr$latestCodeStr",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
-                    if (app.statusText != null && app.statusText != "Prêt") {
-                        Text(
-                            text = app.statusText,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.secondary
-                        )
-                    }
                 }
+            }
 
-                Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-                // Boutons d'action contextuels
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    when {
-                        // En cours de téléchargement
-                        isUpdating -> {
-                            FilledTonalButton(
-                                onClick = { },
-                                enabled = false,
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("En cours", fontSize = 13.sp)
-                            }
+            // SECTION ACTIONS DÉDIÉE (pleine largeur, alignée à droite)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                when {
+                    // En cours de téléchargement
+                    isUpdating -> {
+                        FilledTonalButton(
+                            onClick = { },
+                            enabled = false,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Téléchargement...", fontSize = 13.sp)
                         }
+                    }
 
-                        // En file d'attente
-                        isQueued -> {
-                            FilledTonalButton(
-                                onClick = { },
-                                enabled = false,
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Schedule,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("En attente", fontSize = 13.sp)
-                            }
-                        }
-
-                        // Aucun APK encore compilé (ex: Antigravity Mobile en attente de CI)
-                        hasNoApkYet -> {
-                            OutlinedButton(
-                                onClick = onOpenBuildStatus,
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.secondary
-                                )
-                            ) {
-                                Icon(
-                                    Icons.Default.CloudQueue,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Statut CI", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                            }
-                        }
-
-                        // Déjà à jour : Bouton principal "Ouvrir" + bouton "Désinstaller" + bouton discret "Réinstaller"
-                        isUpToDate -> {
-                            Button(
-                                onClick = onOpenApp,
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary
-                                )
-                            ) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.Launch,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Ouvrir", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            }
-
-                            Spacer(modifier = Modifier.width(2.dp))
-
-                            IconButton(
-                                onClick = onRequestForceReinstall,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Refresh,
-                                    contentDescription = "Forcer la réinstallation",
-                                    tint = MaterialTheme.colorScheme.outline,
-                                    modifier = Modifier.size(17.dp)
-                                )
-                            }
-
-                            IconButton(
-                                onClick = onUninstallApp,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.DeleteOutline,
-                                    contentDescription = "Désinstaller",
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-
-                        // Mise à jour disponible : Bouton principal "Mettre à jour" + bouton "Ouvrir" + bouton "Désinstaller"
-                        hasUpdate -> {
-                            Button(
-                                onClick = onInstallOrUpdate,
-                                enabled = app.downloadUrl != null,
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary
-                                )
-                            ) {
-                                Icon(
-                                    Icons.Default.SystemUpdateAlt,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Mettre à jour", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            }
-
+                    // En file d'attente
+                    isQueued -> {
+                        FilledTonalButton(
+                            onClick = { },
+                            enabled = false,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Schedule,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
                             Spacer(modifier = Modifier.width(4.dp))
-
-                            FilledTonalButton(
-                                onClick = onOpenApp,
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.Launch,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Ouvrir", fontSize = 12.sp)
-                            }
-
-                            IconButton(
-                                onClick = onUninstallApp,
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.DeleteOutline,
-                                    contentDescription = "Désinstaller",
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
+                            Text("En attente", fontSize = 13.sp)
                         }
+                    }
 
-                        // Non installée : Bouton "Installer"
-                        !isInstalled -> {
-                            Button(
-                                onClick = onInstallOrUpdate,
-                                enabled = app.downloadUrl != null,
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Download,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Installer", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            }
+                    // Aucun APK encore compilé
+                    hasNoApkYet -> {
+                        OutlinedButton(
+                            onClick = onOpenBuildStatus,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.CloudQueue,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Statut CI", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         }
+                    }
 
-                        // Autre état de repli
-                        else -> {
-                            FilledTonalButton(
-                                onClick = { },
-                                enabled = false,
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text("Indisponible", fontSize = 13.sp)
-                            }
+                    // Déjà à jour
+                    isUpToDate -> {
+                        IconButton(
+                            onClick = onUninstallApp,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.DeleteOutline,
+                                contentDescription = "Désinstaller",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = onRequestForceReinstall,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Refresh,
+                                contentDescription = "Forcer la réinstallation",
+                                tint = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Button(
+                            onClick = onOpenApp,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Launch,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Ouvrir", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    // Mise à jour disponible
+                    hasUpdate -> {
+                        IconButton(
+                            onClick = onUninstallApp,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.DeleteOutline,
+                                contentDescription = "Désinstaller",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(2.dp))
+                        FilledTonalButton(
+                            onClick = onOpenApp,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Launch,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Ouvrir", fontSize = 12.sp)
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Button(
+                            onClick = onInstallOrUpdate,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Icon(
+                                Icons.Default.SystemUpdateAlt,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Mettre à jour", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    // Non installée
+                    !isInstalled -> {
+                        Button(
+                            onClick = onInstallOrUpdate,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Icon(
+                                Icons.Default.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Installer", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+
+                    else -> {
+                        FilledTonalButton(
+                            onClick = { },
+                            enabled = false,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Indisponible", fontSize = 13.sp)
                         }
                     }
                 }
