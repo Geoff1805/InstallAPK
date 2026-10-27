@@ -49,7 +49,7 @@ jobs:
 
       - name: Notify via Email on Failure
         if: steps.check_token.outputs.status == 'invalid'
-        uses: dawidd6/action-send-mail@v4
+        uses: dawidd6/action-send-mail@v22
         continue-on-error: true
         with:
           server_address: smtp.gmail.com
