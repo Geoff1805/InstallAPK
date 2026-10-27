@@ -1,9 +1,16 @@
-param(
+﻿param(
     [string[]]$Files,
     [string]$CommitMessage = "fix: update repository files",
     [string]$RepoName = "InstallAPK",
     [string]$BaseDir = "G:\Mon Drive\05_Dev\InstallAPK"
 )
+
+# Configuration Encodage UTF-8 Standard (Antigravity)
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding           = [System.Text.Encoding]::UTF8
+$PSDefaultParameterValues['*:Encoding'] = 'utf8'
+
 
 $ErrorActionPreference = "Stop"
 
