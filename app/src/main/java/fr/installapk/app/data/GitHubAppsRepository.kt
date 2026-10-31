@@ -99,14 +99,14 @@ class GitHubAppsRepository(private val context: Context) {
             artifactPattern = "InstallAPK.apk"
         ),
         ProjectApp(
-            id = "antigravity-controller",
+            id = "WorkspaceOrganizer",
             repoOwner = "Geoff1805",
-            repoName = "antigravity-controller",
-            packageName = "fr.antigravity.controller",
-            displayName = "Antigravity Controller",
-            description = "Contrôleur mobile et dashboard Flutter pour l'agent Antigravity",
-            iconEmoji = "🎮",
-            artifactPattern = "AntigravityController.apk"
+            repoName = "WorkspaceOrganizer",
+            packageName = "com.geoff1805.workspaceorganizer.debug",
+            displayName = "Workspace Organizer",
+            description = "Superviseur mobile de workspaces Antigravity & dev",
+            iconEmoji = "🗂️",
+            artifactPattern = "WorkspaceOrganizer.apk"
         )
     )
 

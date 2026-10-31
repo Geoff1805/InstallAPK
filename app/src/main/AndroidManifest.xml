@@ -17,7 +17,7 @@
         <package android:name="com.aistudio.inventory.hmtst" />
         <package android:name="fr.installapk.app" />
         <package android:name="com.geoff.applihome" />
-        <package android:name="com.antigravity.antigravity_controller" />
+        <package android:name="com.geoff1805.workspaceorganizer.debug" />
         <package android:name="com.antigravity.mobile" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
