@@ -74,9 +74,9 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const email = process.env.ALERT_EMAIL || 'token.github@alsteens.net';
+            const email = process.env.ALERT_EMAIL || '(non configurée — définir la variable de dépôt ALERT_EMAIL)';
             const issueTitle = '🚨 [ALERTE] Clé GitHub PAT Expirée ou Invalide';
-            const issueBody = `### ⚠️ Alerte Validité du Jeton GitHub\n\nLa clé GitHub configurée pour **InstallAPK** a été détectée comme **invalide ou révoquée** par la vérification automatique quotidienne.\n\n- **Email de contact notifié :** ${email}\n- **Action requise :** Générer un nouveau Personal Access Token (scope \`repo\`) et le renseigner dans l'application Android et les variables du dépôt.\n\n_Vérification automatique InstallAPK CI._`;
+            const issueBody = `### ⚠️ Alerte Validité du Jeton GitHub\n\nLa clé GitHub configurée pour **InstallAPK** a été détectée comme **invalide ou révoquée** par la vérification automatique.\n\n- **Email de contact notifié :** ${email}\n- **Action requise :** Générer un nouveau Personal Access Token (scope \`repo\`) et le renseigner dans l'application Android et les variables du dépôt.\n\n_Vérification automatique InstallAPK CI._`;
             
             const issues = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
