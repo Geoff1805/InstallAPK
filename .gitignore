@@ -23,6 +23,7 @@ app/build/
 .env.local
 *.jks
 *.keystore
+*.keystore.base64
 *.pem
 *.key
 *.p12
