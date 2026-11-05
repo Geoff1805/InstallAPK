@@ -107,6 +107,16 @@ class GitHubAppsRepository(private val context: Context) {
             description = "Superviseur mobile de workspaces Antigravity & dev",
             iconEmoji = "🗂️",
             artifactPattern = "WorkspaceOrganizer.apk"
+        ),
+        ProjectApp(
+            id = "tour-de-controle-web",
+            repoOwner = "Geoff1805",
+            repoName = "tour-de-controle-web",
+            packageName = "fr.antigravity.controller",
+            displayName = "Tour de Contrôle",
+            description = "Contrôleur mobile et console de supervision Antigravity",
+            iconEmoji = "🎮",
+            artifactPattern = "AntigravityController.apk"
         )
     )
 
